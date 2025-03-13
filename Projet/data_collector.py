@@ -4,10 +4,14 @@ import numpy as np
 import sqlite3
 
 
-def get_data_yf(ticker):
-    df = yf.download(ticker, start='2023-01-01', end='2024-12-31')[['Close']].ffill()    
-    return df
-    
+
+def get_data_yf(ticker, start_date, end_date):
+    df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True)[['Close']].ffill()
+    df.columns = [ticker]  # Rename the 'Close' column to the ticker name
+    df.index.name = 'Date'  # Ensure 'Date' is the index
+    return df.reset_index()  # Reset index to avoid MultiIndex issues
+
+
 def get_data_sql(ticker, start_date, end_date):
     query = """
     SELECT * FROM fund 
