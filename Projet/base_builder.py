@@ -4,6 +4,7 @@ import random
 import pandas as pd
 fake = Faker()
 from datetime import date, timedelta
+from data_collector import get_data_yf
 
 
 db_file = "Fund.db"
@@ -97,7 +98,7 @@ finally:
     if conn:
         conn.close()
 
-
+##############################################
 def determine_risk_type(amount, knowledge, preference, goal, age):
     """Détermine le type de risque en fonction des caractéristiques du client."""
     if amount > 50000 and knowledge == 'High' and preference in ['Stocks', 'Cryptocurrency']:
@@ -110,7 +111,10 @@ def determine_risk_type(amount, knowledge, preference, goal, age):
         return 'LOW_TURNOVER'
     else:
         return random.choice(['LOW_RISK', 'LOW_TURNOVER'])
-    
+##############################################    
+
+
+##############################################
 def generate_clients_data(n: int):
     """Génère des données fictives pour les clients."""
     clients_data = []
@@ -148,8 +152,10 @@ def generate_clients_data(n: int):
         ))
     
     return clients_data
+##############################################
 
 
+##############################################
 def generate_managers_data(l): #  l = 3 managers car 3 profils de risque 
     managers_data = []
     for _ in range(l):
@@ -161,8 +167,10 @@ def generate_managers_data(l): #  l = 3 managers car 3 profils de risque
         SENIORITY = random.randint(0, 40)
         managers_data.append((FIRST_NAME, LAST_NAME, BIRTH_DATE, EMAIL, PHONE, SENIORITY))
     return managers_data
+##############################################
 
 
+##############################################
 # Nombre de clients à générer
 num_clients = 3
 
@@ -187,8 +195,9 @@ finally:
     # Fermeture de la connexion
     if conn:
         conn.close()
+##############################################
 
-
+##############################################
 # Nombre de Managers à générer
 num_managers = 3
 
@@ -213,3 +222,11 @@ finally:
     # Fermeture de la connexion
     if conn:
         conn.close()
+##############################################
+
+##############################################
+tickers = ["AAPL", "GOOGL", "AMZN", "MSFT", "TSLA", "FB", "NVDA", "PYPL", "ADBE", "INTC"]
+
+for ticker in tickers: 
+    get_data_yf(ticker, "2023-01-01", "2021-12-31")
+print(df.header())
