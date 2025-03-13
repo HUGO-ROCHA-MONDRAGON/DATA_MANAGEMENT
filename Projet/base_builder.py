@@ -32,7 +32,9 @@ Query_CLIENTS = """CREATE TABLE IF NOT EXISTS Clients (
 
     ASSET_PREFERENCE TEXT CHECK(ASSET_PREFERENCE IN ('Stocks', 'Bonds', 'Commodities', 'Real Estate', 'Cryptocurrency')) NOT NULL,
 
-    INVESTMENT_GOAL TEXT CHECK(INVESTMENT_GOAL IN ('Retirement', 'Education', 'Wealth Preservation', 'Wealth Accumulation', 'Other')) NOT NULL
+    INVESTMENT_GOAL TEXT CHECK(INVESTMENT_GOAL IN ('Retirement', 'Education', 'Wealth Preservation', 'Wealth Accumulation', 'Other')) NOT NULL,
+
+    AGE INTEGER
 );
 
 """
@@ -113,7 +115,7 @@ Query_portfolio = """CREATE TABLE IF NOT EXISTS Portfolios (
     
     LAST_UPDATED DATE NOT NULL,
     
-    SPORT PRICE REAL CHECK(SPOT_PRICE >= 0) NOT NULL
+    SPORT_PRICE REAL CHECK(SPOT_PRICE >= 0) NOT NULL
 
 );
 
@@ -194,15 +196,15 @@ def generate_clients_data(n: int):
         INVESTMENT_KNOWLEDGE = random.choice(['Low', 'Medium', 'High'])
         ASSET_PREFERENCE = random.choice(['Stocks', 'Bonds', 'Commodities', 'Real Estate', 'Cryptocurrency'])
         INVESTMENT_GOAL = random.choice(['Retirement', 'Education', 'Wealth Preservation', 'Wealth Accumulation', 'Other'])
+        AGE = (date.today() - BIRTH_DATE).days // 365
 
         # Ajout des données à la liste
         clients_data.append((
-            FIRST_NAME, LAST_NAME, EMAIL, PHONE, BIRTH_DATE_STR, REGISTRATION_DATE_STR, 
-            RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL
+            FIRST_NAME, LAST_NAME, EMAIL, BIRTH_DATE_STR, PHONE, REGISTRATION_DATE_STR, 
+            RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL, AGE
         ))
     
     return clients_data
-
 
 
 def generate_managers_data(l): #  l = 3 managers car 3 profils de risque 
@@ -210,13 +212,12 @@ def generate_managers_data(l): #  l = 3 managers car 3 profils de risque
     for _ in range(l):
         FIRST_NAME = fake.first_name()
         LAST_NAME = fake.last_name()
-        MAIL = fake.email()
         BIRTH_DATE = fake.date_of_birth(minimum_age=18, maximum_age=80).strftime('%Y-%m-%d')
+        EMAIL = fake.email()
         PHONE = fake.phone_number()
         SENIORITY = random.randint(0, 40)
-        managers_data.append((FIRST_NAME, LAST_NAME, MAIL, BIRTH_DATE, PHONE, SENIORITY))
+        managers_data.append((FIRST_NAME, LAST_NAME, BIRTH_DATE, EMAIL, PHONE, SENIORITY))
     return managers_data
-
 
 
 # Nombre de clients à générer
@@ -228,8 +229,8 @@ try:
     cursor = conn.cursor()
     # Insertion des données dans la table Clients
     insert_query = """
-    INSERT INTO Clients (FIRST_NAME, LAST_NAME, EMAIL, BIRTH_DATE, PHONE, REGISTRATION_DATE, RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO Clients (FIRST_NAME, LAST_NAME, EMAIL, BIRTH_DATE, PHONE, REGISTRATION_DATE, RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL, AGE)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     clients_data = generate_clients_data(num_clients)
     cursor.executemany(insert_query, clients_data)
