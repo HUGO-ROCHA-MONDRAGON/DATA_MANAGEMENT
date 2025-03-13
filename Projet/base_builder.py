@@ -6,7 +6,7 @@ fake = Faker()
 from datetime import date, timedelta
 
 
-db_file = "FUNDSSSS.db"
+db_file = "Fund.db"
 
 Query_CLIENTS = """CREATE TABLE IF NOT EXISTS Clients (
 
