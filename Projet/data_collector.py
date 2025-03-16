@@ -3,13 +3,24 @@ import pandas as pd
 import numpy as np
 import sqlite3
 
-
-
 def get_data_yf(ticker, start_date, end_date):
-    df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True)[['Close']].ffill()
-    df.columns = [ticker]  # Rename the 'Close' column to the ticker name
-    df.index.name = 'Date'  # Ensure 'Date' is the index
-    return df.reset_index()  # Reset index to avoid MultiIndex issues
+    try:
+
+        df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True)[['Close']].ffill()
+        df.columns = ['PRICE']  
+        df.index.name = 'IMPORT_DATE'  
+        
+        stock = yf.Ticker(ticker)
+        sector = stock.info.get("sector", "Unknown")  
+        
+        df["TICKER"] = ticker
+        df["SECTOR"] = sector
+        
+        return df.reset_index()
+
+    except Exception as e:
+        print(f"Failed to fetch data for {ticker}: {e}")
+        return pd.DataFrame()
 
 
 def get_data_sql(ticker, start_date, end_date):
