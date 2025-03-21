@@ -1,5 +1,5 @@
 import pandas as pd
-from data_collector import get_data_yf
+from data_collector import GetData
 from datetime import datetime, timedelta
 import sqlite3
 
@@ -10,54 +10,72 @@ class BaseUpdate:
         self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
         self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
         self.all_data = None
-    
-    def main_data_frame(self):
-        data_frames = []
-    
-        for ticker in self.tickers:
-            try:
-                df = get_data_yf(ticker, self.start_date, self.end_date)
-                if not df.empty:
-                    data_frames.append(df)
-            except Exception as e:
-                print(f"Failed to fetch data for {ticker}: {e}")
-    
-        if data_frames:
-            self.all_data = pd.concat(data_frames, ignore_index=True)
-        else:
-            self.all_data = pd.DataFrame(columns=["IMPORT_DATE", "TICKER", "SECTOR", "PRICE"])
+        self.data_collector = GetData()
 
-
-    def weekly_update(self, db_file):
-        if self.all_data is None: 
-            print("No data available, please make sure all_data is populated")
-            return
+    def update_products(self, db_file):
+        """
+        Updates the Products table with new market data for a specific date range.
         
-
-        current_date = self.start_date#Verifier que le premier jour est bien un lundi
-        while current_date <= self.end_date: 
-            last_week_date = current_date - timedelta(days=7)
-            weekly_data = self.all_data[(self.all_data['IMPORT_DATE'] <= current_date) & (self.all_data['IMPORT_DATE'] >= last_week_date)]
-
-            try: 
-                conn = sqlite3.connect(db_file)
-                weekly_data.to_sql('PRODUCTS', conn, if_exists='append', index=False)
-                conn.commit()
-                print(f"Data for the week starting {last_week_date.strftime("%d/%m/%Y")} inserted successfully.")
-            except sqlite3.Error as e:
-                print(f"SQLite error: {e}")
-            finally:
-                if conn:
-                    conn.close()
-            current_date += timedelta(days=7)
-
-
-
-# if __name__ == "__main__":
-#     tickers = ["AAPL", "GOOGL", "AMZN", "MSFT", "TSLA", "META", "NVDA", "PYPL", "ADBE", "INTC"]
-#     start_date = "01/01/2023"
-#     end_date = "31/12/2023"
-
-#     base_update = BaseUpdate(tickers, start_date, end_date)
-#     base_update.main_data_frame()
-#     base_update.weekly_update("Fund.db")
+        Args:
+            db_file (str): Path to the SQLite database file
+        """
+        try:
+            # Configure the data collector
+            self.data_collector.tickers = self.tickers
+            self.data_collector.start_date = self.start_date.strftime("%Y-%m-%d")
+            self.data_collector.end_date = self.end_date.strftime("%Y-%m-%d")
+            
+            # Get the market data
+            df = self.data_collector.main_data_frame()
+            
+            if df.empty:
+                print("No data to update.")
+                return
+            
+            # Convert IMPORT_DATE to datetime for filtering
+            df['IMPORT_DATE'] = pd.to_datetime(df['IMPORT_DATE'])
+            
+            # Filter data for the specified date range
+            mask = (df['IMPORT_DATE'] >= self.start_date) & (df['IMPORT_DATE'] <= self.end_date)
+            df_filtered = df[mask]
+            
+            if df_filtered.empty:
+                print(f"No data available for the specified date range ({self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')})")
+                return
+            
+            # Convert IMPORT_DATE back to string format for SQLite
+            df_filtered['IMPORT_DATE'] = df_filtered['IMPORT_DATE'].dt.strftime('%Y-%m-%d')
+            
+            # Connect to the database
+            conn = sqlite3.connect(db_file)
+            cursor = conn.cursor()
+            
+            # Prepare the insert query
+            insert_query = """
+            INSERT INTO Products (TICKER, SECTOR, PRICE, IMPORT_DATE)
+            VALUES (?, ?, ?, ?)
+            """
+            
+            # Insert the filtered data
+            records_inserted = 0
+            for _, row in df_filtered.iterrows():
+                try:
+                    cursor.execute(insert_query, (
+                        row['TICKER'],
+                        row['SECTOR'],
+                        float(row['PRICE']),
+                        row['IMPORT_DATE']
+                    ))
+                    records_inserted += 1
+                except sqlite3.Error as e:
+                    print(f"Error inserting row for {row['TICKER']}: {e}")
+                    continue
+            
+            conn.commit()
+            print(f"Successfully inserted {records_inserted} new records into Products table for the period {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}")
+            
+        except Exception as e:
+            print(f"Error updating Products table: {e}")
+        finally:
+            if 'conn' in locals():
+                conn.close()

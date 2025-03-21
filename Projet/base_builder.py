@@ -12,7 +12,8 @@ class DatabaseBuilder:
 
     def create_tables(self):
         Query_products = """CREATE TABLE IF NOT EXISTS Products (
-            TICKER TEXT PRIMARY KEY,
+            PRODUCT_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            TICKER TEXT NOT NULL,
             SECTOR TEXT NOT NULL,
             PRICE REAL CHECK(PRICE >= 0) NOT NULL,
             IMPORT_DATE DATE NOT NULL
@@ -22,8 +23,7 @@ class DatabaseBuilder:
             TICKER TEXT PRIMARY KEY,
             FIVE_YEAR_PERFORMANCE REAL,
             TRADING_VOLUME INTEGER CHECK(TRADING_VOLUME >= 0),
-            L_RETURN REAL,
-            FOREIGN KEY(TICKER) REFERENCES Products(TICKER) ON DELETE CASCADE
+            L_RETURN REAL
         );"""
 
         Query_managers = """CREATE TABLE IF NOT EXISTS Managers (
@@ -60,7 +60,6 @@ class DatabaseBuilder:
             MANAGER_ID INTEGER NOT NULL,
             LAST_UPDATED DATE NOT NULL,
             SPOT_PRICE REAL CHECK(SPOT_PRICE >= 0) NOT NULL,
-            FOREIGN KEY(TICKER) REFERENCES Products(TICKER) ON DELETE CASCADE,
             FOREIGN KEY(MANAGER_ID) REFERENCES Managers(MANAGER_ID) ON DELETE SET NULL
         );"""
 
@@ -74,7 +73,6 @@ class DatabaseBuilder:
             QUANTITY INTEGER CHECK(QUANTITY > 0) NOT NULL,
             BUY_PRICE REAL CHECK(BUY_PRICE >= 0) NOT NULL,
             FOREIGN KEY(PORTFOLIO_ID) REFERENCES Portfolios(PORTFOLIO_ID) ON DELETE CASCADE,
-            FOREIGN KEY(TICKER) REFERENCES Products(TICKER) ON DELETE CASCADE,
             FOREIGN KEY(MANAGER_ID) REFERENCES Managers(MANAGER_ID) ON DELETE SET NULL
         );"""
 
@@ -181,3 +179,5 @@ class DatabaseBuilder:
         finally:
             if conn:
                 conn.close()
+
+    
