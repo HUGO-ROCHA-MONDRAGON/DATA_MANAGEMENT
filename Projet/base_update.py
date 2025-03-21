@@ -5,8 +5,11 @@ import sqlite3
 
 
 class BaseUpdate: 
+    #tickers : une lsite de tickers n
+    #start_date : date de debut de la collecte de données 
+    #end_date : date de fin 
     def __init__(self, tickers, start_date, end_date):
-        self.tickers = tickers
+        self.list_tickers = tickers
         self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
         self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
         self.all_data = None
@@ -14,7 +17,7 @@ class BaseUpdate:
     def main_data_frame(self):
         data_frames = []
     
-        for ticker in self.tickers:
+        for ticker in self.list_tickers:
             try:
                 df = get_data_yf(ticker, self.start_date, self.end_date)
                 if not df.empty:
