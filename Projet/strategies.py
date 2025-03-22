@@ -72,9 +72,9 @@ class RunAllStrat:
         print("Stopping strategy update...")
 
 # Example usage
-if __name__ == "__main__":
-    start_date = "31/12/2023"
-    end_date = "31/05/2024"
-    tickers = ['AAPL', 'MSFT', 'GOOGL']  # Example tickers
-    strategy_runner = RunAllStrat("Fund.db", start_date, end_date, tickers)
-    strategy_runner.run()
+#if __name__ == "__main__":
+#    start_date = "31/12/2023"
+#    end_date = "31/05/2024"
+#    tickers = ['AAPL', 'MSFT', 'GOOGL']  # Example tickers
+#    strategy_runner = RunAllStrat("Fund.db", start_date, end_date, tickers)
+#    strategy_runner.run()
