@@ -22,8 +22,8 @@ class BaseUpdate:
         try:
             # Configure the data collector
             self.data_collector.tickers = self.tickers
-            self.data_collector.start_date = self.start_date.strftime("%Y-%m-%d")
-            self.data_collector.end_date = self.end_date.strftime("%Y-%m-%d")
+            self.data_collector.start_date = self.start_date.strftime("%d/%m/%Y")
+            self.data_collector.end_date = self.end_date.strftime("%d/%m/%Y")
             
             # Get the market data
             df = self.data_collector.main_data_frame()
@@ -40,11 +40,11 @@ class BaseUpdate:
             df_filtered = df[mask]
             
             if df_filtered.empty:
-                print(f"No data available for the specified date range ({self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')})")
+                print(f"No data available for the specified date range ({self.start_date.strftime('%d/%m/%Y')} to {self.end_date.strftime('%d/%m/%Y')})")
                 return
             
             # Convert IMPORT_DATE back to string format for SQLite
-            df_filtered['IMPORT_DATE'] = df_filtered['IMPORT_DATE'].dt.strftime('%Y-%m-%d')
+            df_filtered['IMPORT_DATE'] = df_filtered['IMPORT_DATE'].dt.strftime('%d/%m/%Y')
             
             # Connect to the database
             conn = sqlite3.connect(db_file)
@@ -72,7 +72,7 @@ class BaseUpdate:
                     continue
             
             conn.commit()
-            print(f"Successfully inserted {records_inserted} new records into Products table for the period {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}")
+            print(f"Successfully inserted {records_inserted} new records into Products table for the period {self.start_date.strftime('%d/%m/%Y')} to {self.end_date.strftime('%d/%m/%Y')}")
             
         except Exception as e:
             print(f"Error updating Products table: {e}")
