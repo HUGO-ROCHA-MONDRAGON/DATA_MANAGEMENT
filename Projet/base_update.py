@@ -79,3 +79,39 @@ class BaseUpdate:
         finally:
             if 'conn' in locals():
                 conn.close()
+def update_portefeuille1(db_file,tickers,risk_type,quantité_initiale):
+    
+    # Connexion à la base
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+
+    # Étape 1 : récupérer le MANAGER_ID de la table Managers
+    cursor.execute("SELECT MANAGER_ID FROM Managers ORDER BY MANAGER_ID LIMIT 1")
+    manager_id = cursor.fetchone()[0]  # prend le premier manager
+
+    # Étape 2 : insérer chaque ticker avec les données de dernière date
+    for ticker in tickers:
+        cursor.execute("""
+            SELECT PRICE, IMPORT_DATE 
+            FROM Products 
+            WHERE TICKER = ?
+            ORDER BY IMPORT_DATE DESC 
+            LIMIT 1
+        """, (ticker,))
+
+        row = cursor.fetchone()
+        if row is None:
+            continue  # passe si le ticker n'existe pas dans Products
+
+        spot_price, last_date = row
+
+        # Insertion dans Portfolios
+        cursor.execute("""
+            INSERT INTO Portfolios (RISK_TYPE, TICKER, QUANTITY, MANAGER_ID, LAST_UPDATED, SPOT_PRICE)
+            VALUES ( ?, ?, ?, ?, ?, ?)
+        """, (risk_type ,ticker, quantité_initiale, manager_id, last_date, spot_price))
+
+    # Valider les insertions
+    conn.commit()
+    conn.close()
+    print("Portfolios mis à jour avecc succés")
