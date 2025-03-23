@@ -6,7 +6,7 @@ print(madata)
 
 #à mettre dasns le main
 
-
+#aaaa
 def strat1(dataframe, risk_type):
     # Connexion à la base SQLite
     conn = sqlite3.connect("Fund.db")
