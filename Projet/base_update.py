@@ -115,3 +115,6 @@ def update_portefeuille1(db_file,tickers,risk_type,quantité_initiale):
     conn.commit()
     conn.close()
     print("Portfolios mis à jour avecc succés")
+
+
+#abdel
