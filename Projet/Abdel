@@ -1,0 +1,101 @@
+gdata = GetData(tickers, start_date, end_date)
+madata=gdata.main_data_frame()#on cree le dataframe avec TOUS les actifs TOUTE la periode
+#il manquerait le traitement des datas
+print(madata)
+
+
+#à mettre dasns le main
+
+
+def strat1(dataframe, risk_type):
+    # Connexion à la base SQLite
+    conn = sqlite3.connect("Fund.db")
+    cursor = conn.cursor()
+
+    # Étape 1 : Récupération des quantités initiales
+    quantites = {}
+    query = "SELECT TICKER, QUANTITY FROM Portfolios WHERE RISK_TYPE= ?"
+    cursor.execute(query, (risk_type,))
+    rows = cursor.fetchall()
+    for ticker, qte in rows:
+        quantites[ticker] = qte
+
+    # Étape 2 : Pivot du DataFrame (tickers en colonnes)
+    df = dataframe.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
+
+    # Étape 3 : Calculs par ticker
+    historique = []
+
+    for ticker in df.columns[1:]:  # ignorer IMPORT_DATE
+       # Récupérer MANAGER_ID et PORTFOLIO_ID pour ce TICKER + RISK_TYPE
+        
+        cursor.execute("""
+            SELECT MANAGER_ID, ROWID FROM Portfolios
+            WHERE TICKER = ? AND RISK_TYPE = ?
+        """, (ticker, risk_type))
+        result = cursor.fetchone()
+        if result:
+            manager_id, portfolio_id = result
+        df[f"rend_{ticker}"] = None
+        for i in range(6, len(df), 7):  # tous les 7 jours (1er rendement à la 7e ligne)
+            price_today = df[ticker].iloc[i]
+            price_7_days_ago = df[ticker].iloc[i - 6]
+            rendement = (price_today - price_7_days_ago) / price_7_days_ago
+            df.loc[df.index[i], f"rend_{ticker}"] = rendement
+
+        rendements = df[f"rend_{ticker}"].dropna().tolist()
+        quantite = quantites.get(ticker, 50)
+
+        for j, r in enumerate(rendements):
+            variation = quantite * r
+            quantite += variation
+            spot = df.loc[df.index[j * 7 + 6], ticker]
+            historique.append({
+                "TICKER": ticker,
+                "spot": round(spot, 2),
+                "Rendement": round(r, 4),
+                "Variation_stock": int(variation),
+                "Quantité_totale": int(quantite),
+                "depense/revenu": round(-variation * spot, 2)
+            })
+
+            # Étape 4 : Mise à jour dans la base SQL
+            last_date = pd.to_datetime(df["IMPORT_DATE"].max()).strftime("%Y-%m-%d")
+                # Type d’opération
+            trade_type = "Buy" if variation > 0 else "Sell"
+
+            # Date d’exécution : tu la récupères depuis le DataFrame
+            execution_date = df.loc[df.index[j * 7 + 6], "IMPORT_DATE"]
+            execution_date = pd.to_datetime(execution_date).strftime("%Y-%m-%d")
+
+    # Récupérer MANAGER_ID et PORTFOLIO_ID pour ce TICKER + RISK_TYPE
+        
+
+            # Insertion dans Deals
+            cursor.execute("""
+                INSERT INTO Deals (PORTFOLIO_ID, TICKER, EXECUTION_DATE, MANAGER_ID, TRADE_TYPE, QUANTITY, BUY_PRICE)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                portfolio_id,
+                ticker,
+                execution_date,
+                manager_id,
+                trade_type,
+                abs(int(variation)),
+                float(spot)
+            ))
+      
+
+        cursor.execute("""
+        UPDATE Portfolios
+        SET QUANTITY = ?, LAST_UPDATED = ?, SPOT_PRICE = ?
+        WHERE RISK_TYPE = ? AND TICKER = ?
+        """, (int(quantite), last_date, float(spot), risk_type, ticker))
+
+    conn.commit()
+    conn.close()
+
+    # Étape 5 : Retour du DataFrame des résultats
+    df_resultat = pd.DataFrame(historique)
+    return df_resultat
+strat(madata,"LOW_RISK")
