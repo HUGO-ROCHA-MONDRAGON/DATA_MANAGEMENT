@@ -118,17 +118,16 @@ class DatabaseBuilder:
             BIRTH_DATE = fake.date_of_birth(minimum_age=18, maximum_age=80)
             BIRTH_DATE_STR = BIRTH_DATE.strftime("%d/%m/%Y")
             min_registration_date = BIRTH_DATE + timedelta(days=18*365)
-            max_registration_date = date(2022, 12, 31)
+            max_registration_date = date(2023, 12, 31)
             REGISTRATION_DATE = fake.date_between(start_date=min_registration_date, end_date=max_registration_date)
             REGISTRATION_DATE_STR = REGISTRATION_DATE.strftime("%d/%m/%Y")
-            INVESTMENT_AMOUNT = round(random.uniform(0, 100000), 2)
+            INVESTMENT_AMOUNT = round(random.uniform(100000,10000000), 2)
             INVESTMENT_KNOWLEDGE = random.choice(['Low', 'Medium', 'High'])
             ASSET_PREFERENCE = random.choice(['Stocks', 'Bonds', 'Commodities', 'Real Estate', 'Cryptocurrency'])
             INVESTMENT_GOAL = random.choice(['Retirement', 'Education', 'Wealth Preservation', 'Wealth Accumulation', 'Other'])
             AGE = (date.today() - BIRTH_DATE).days // 365
             RISK_TYPE = self.determine_risk_type(INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL, AGE)
-            AMOUNT_INVESTED = round(random.uniform(100000,1000000), 2)
-            clients_data.append((FIRST_NAME, LAST_NAME, EMAIL, BIRTH_DATE_STR, PHONE, REGISTRATION_DATE_STR, RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL, AGE, AMOUNT_INVESTED))
+            clients_data.append((FIRST_NAME, LAST_NAME, EMAIL, BIRTH_DATE_STR, PHONE, REGISTRATION_DATE_STR, RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL, AGE))
         return clients_data
  
     def generate_managers_data(self, l):
@@ -148,20 +147,7 @@ class DatabaseBuilder:
             max_seniority = max(age_at_reference - 18, 0)
             SENIORITY = int(random.randint(0, max_seniority))
             # Génération d'un montant réaliste d'AUM (entre 1M et 100M)
-            ASSET_UNDER_MANAGEMENT = round(random.uniform(1000000, 100000000), 2)
-           
-            # Vérification que toutes les valeurs sont définies
-            if not all([FIRST_NAME, LAST_NAME, BIRTH_DATE, EMAIL, PHONE, SENIORITY, ASSET_UNDER_MANAGEMENT]):
-                print("❌ Une valeur est manquante dans le tuple")
-                print(f"FIRST_NAME: {FIRST_NAME}")
-                print(f"LAST_NAME: {LAST_NAME}")
-                print(f"BIRTH_DATE: {BIRTH_DATE}")
-                print(f"EMAIL: {EMAIL}")
-                print(f"PHONE: {PHONE}")
-                print(f"SENIORITY: {SENIORITY}")
-                print(f"ASSET_UNDER_MANAGEMENT: {ASSET_UNDER_MANAGEMENT}")
-                continue
-               
+            ASSET_UNDER_MANAGEMENT = 0   
             # Création du tuple dans l'ordre exact attendu par la requête SQL
             manager_tuple = (FIRST_NAME, LAST_NAME, BIRTH_DATE, EMAIL, PHONE, SENIORITY, ASSET_UNDER_MANAGEMENT)
             managers_data.append(manager_tuple)
@@ -174,8 +160,8 @@ class DatabaseBuilder:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
             insert_query = """
-            INSERT INTO Clients (FIRST_NAME, LAST_NAME, EMAIL, BIRTH_DATE, PHONE, REGISTRATION_DATE, RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL, AGE, AMOUNT_INVESTED)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO Clients (FIRST_NAME, LAST_NAME, EMAIL, BIRTH_DATE, PHONE, REGISTRATION_DATE, RISK_TYPE, INVESTMENT_AMOUNT, INVESTMENT_KNOWLEDGE, ASSET_PREFERENCE, INVESTMENT_GOAL, AGE)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             clients_data = self.generate_clients_data(num_clients)
             cursor.executemany(insert_query, clients_data)
