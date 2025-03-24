@@ -1,57 +1,149 @@
-Sub Envoyer_Email()
-    Dim OutlookApp As Object
-    Dim OutlookMail As Object
-    Dim wordEditor As Object
-    Dim wb As Workbook
-    Dim wsR As Worksheet
-    Dim lastRow As Long
-    Dim destinataire As String
-    Dim Sujet As String
-    Dim Corps As String
-    Dim jour As Integer, mois As Integer, annee As Integer
+import pandas as pd
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.utils import get_column_letter
+from datetime import date, timedelta
 
-    ' Set references
-    Set wb = ThisWorkbook
-    Set wsR = wb.Worksheets("ratings") ' Your ratings sheet
-    lastRow = wsR.Cells(wsR.Rows.Count, 1).End(xlUp).Row
+# Paths
+excel_ratings = "C:/Users/h24826/BNP Paribas/GFI - GCC - Structured Credit - Documents/Portfolio Management/Hugo/Ratings/RATINGS.xlsx"
+excel_output = "C:/Users/h24826/BNP Paribas/GFI - GCC - Structured Credit - Documents/Portfolio Management/Hugo/Ratings/RATINGS_output.xlsx"
+output_wsname = "ratings"
 
-    ' Exit if Mail_Show flag is False
-    If Mail_Show = False Then Exit Sub
+# Sheet mapping
+sheet_pairs = [
+    ("T_MINUS_ONE_A", "T_MINUS_TWO_A"),
+    ("T_MINUS_ONE_B", "T_MINUS_TWO_B"),
+    ("T_MINUS_ONE_C", "T_MINUS_TWO_C")
+]
 
-    ' Dates
-    jour = Day(Now)
-    mois = Month(Now)
-    annee = Year(Now)
+label_map = {
+    "T_MINUS_ONE_A": "FLABSA",
+    "T_MINUS_ONE_B": "FLABSB",
+    "T_MINUS_ONE_C": "FLABSC"
+}
 
-    ' Email fields
-    destinataire = "david.favier@bnpparibas.com; olivier.boucillotte@bnpparibas.com"
-    Sujet = "Rating changes as of " & jour & "/" & mois & "/" & annee
-    Corps = "Dear Pricing Team," & Chr(10) & Chr(10) & _
-            "Would you please consider the price challenges from the following file?" & Chr(10) & Chr(10) & _
-            "Thank you for your continuous support."
+# Dates
+today = date.today()
+minus_1 = today - timedelta(days=1)
+minus_2 = today - timedelta(days=2)
 
-    ' Create Outlook email
-    Set OutlookApp = CreateObject("Outlook.Application")
-    Set OutlookMail = OutlookApp.CreateItem(0)
+# Styles
+bold_font = Font(bold=True)
+italic_font = Font(italic=True)
+header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+upgrade_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")  # Green
+downgrade_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")  # Red
+white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
-    ' Copy the Excel table as image
-    wsR.Range("A1:E" & lastRow).CopyPicture Appearance:=xlScreen, Format:=xlPicture
+thin_border = Border(
+    left=Side(style="thin"), right=Side(style="thin"),
+    top=Side(style="thin"), bottom=Side(style="thin")
+)
+center_align = Alignment(horizontal="center", vertical="center")
 
-    With OutlookMail
-        .To = destinataire
-        .Subject = Sujet
-        .Display ' Must display before accessing WordEditor
-        Set wordEditor = .GetInspector.WordEditor
+# Rating change logic
+def get_rating_change(row, agency):
+    old_rating = row[f"{agency}_minus2"]
+    new_rating = row[f"{agency}_minus1"]
+    if pd.isna(old_rating) or pd.isna(new_rating):
+        return ""
+    if old_rating == new_rating:
+        return ""
+    return f"{old_rating} → {new_rating}"
 
-        ' Insert message + image
-        wordEditor.Application.Selection.TypeText Corps & vbCrLf & vbCrLf
-        wordEditor.Application.Selection.TypeParagraph
-        wordEditor.Application.Selection.Paste
-        .Send
-    End With
+# Open/create workbook
+try:
+    wb = load_workbook(excel_output)
+    if output_wsname in wb.sheetnames:
+        del wb[output_wsname]  # Overwrite sheet
+    ws = wb.create_sheet(output_wsname)
+except FileNotFoundError:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = output_wsname
 
-    ' Cleanup
-    Set OutlookMail = Nothing
-    Set OutlookApp = Nothing
-    MsgBox "L'e-mail avec les pièces jointes a été envoyé avec succès.", vbInformation
-End Sub
+start_row = 2
+
+for sheet1, sheet2 in sheet_pairs:
+    t1 = pd.read_excel(excel_ratings, sheet_name=sheet1)
+    t2 = pd.read_excel(excel_ratings, sheet_name=sheet2)
+
+    # Clean ID columns
+    for df in [t1, t2]:
+        df["ISIN"] = df["ISIN"].astype(str).str.strip()
+        df["Security_description"] = df["Security_description"].astype(str).str.strip()
+
+    # Rename columns
+    t1 = t1.rename(columns={"Moodys": "Moodys_minus1", "Fitch": "Fitch_minus1", "S&P": "S&P_minus1"})
+    t2 = t2.rename(columns={"Moodys": "Moodys_minus2", "Fitch": "Fitch_minus2", "S&P": "S&P_minus2"})
+
+    df = t1.merge(t2, on=["ISIN", "Security_description"], how="inner")
+
+    # Compute changes
+    for agency in ["Moodys", "Fitch", "S&P"]:
+        df[f"{agency}_change"] = df.apply(lambda row: get_rating_change(row, agency), axis=1)
+
+    # Keep rows with at least one change
+    changes = df[
+        (df[["Moodys_change", "Fitch_change", "S&P_change"]] != "").any(axis=1)
+    ][["ISIN", "Security_description", "Moodys_change", "Fitch_change", "S&P_change"]]
+
+    # Remove duplicates
+    changes = changes.drop_duplicates(subset=["ISIN"])
+
+    # Header
+    label = label_map.get(sheet1, "Unknown")
+    header_text = f"{label}: {minus_1.strftime('%d/%m/%Y')} vs {minus_2.strftime('%d/%m/%Y')}"
+    ws.cell(row=start_row, column=1, value=header_text).font = bold_font
+    start_row += 1
+
+    if changes.empty:
+        cell = ws.cell(row=start_row, column=1, value="No changes")
+        cell.font = italic_font
+        cell.fill = white_fill
+        start_row += 2
+    else:
+        headers = ["ISIN", "Security_description", "Moodys_change", "Fitch_change", "S&P_change"]
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row=start_row, column=col_idx, value=header)
+            cell.font = bold_font
+            cell.fill = header_fill
+            cell.border = thin_border
+            cell.alignment = center_align
+        start_row += 1
+
+        for row in changes.itertuples(index=False):
+            for col_idx, value in enumerate(row, start=1):
+                cell = ws.cell(row=start_row, column=col_idx, value=value)
+                cell.border = thin_border
+                cell.alignment = center_align
+
+                # Detect and highlight upgrade/downgrade
+                if col_idx >= 3 and isinstance(value, str) and "→" in value:
+                    left, right = value.split("→")
+                    left = left.strip().replace("(", "").replace(")", "")
+                    right = right.strip().replace("(", "").replace(")", "")
+
+                    if left > right:
+                        cell.fill = upgrade_fill
+                    elif left < right:
+                        cell.fill = downgrade_fill
+                    else:
+                        cell.fill = white_fill
+                else:
+                    cell.fill = white_fill
+            start_row += 1
+        start_row += 1
+
+# Auto column width
+for column_cells in ws.columns:
+    max_len = 0
+    col_letter = get_column_letter(column_cells[0].column)
+    for cell in column_cells:
+        if cell.value:
+            max_len = max(max_len, len(str(cell.value)))
+    ws.column_dimensions[col_letter].width = max_len + 2
+
+# Save
+wb.save(excel_output)
+print(f"Data inserted into '{output_wsname}' in {excel_output}")
