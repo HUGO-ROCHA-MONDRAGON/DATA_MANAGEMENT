@@ -13,30 +13,23 @@ print(madata)
 
 #à mettre dasns le main
 
-def strat1():
-    # Connexion à la base SQLite
-    conn = sqlite3.connect("Fund.db")
+def strategy_low_risk(self):
+    print("Running LOW_RISK strategy...")
+    conn = sqlite3.connect(self.db_file)
     cursor = conn.cursor()
+    risk_type = "LOW_RISK"
 
-    # RISK_TYPE fixe à 1
-    risk_type = 1
-
-    # Étape 1 : Récupération des quantités initiales
+    # Étape 1 : Quantités initiales
     quantites = {}
     query = "SELECT TICKER, QUANTITY FROM Portfolios WHERE RISK_TYPE = ?"
     cursor.execute(query, (risk_type,))
-    rows = cursor.fetchall()
-    for ticker, qte in rows:
+    for ticker, qte in cursor.fetchall():
         quantites[ticker] = qte
 
-    # Étape 2 : Récupération des données depuis la table SQL "Products"
-    query = "SELECT IMPORT_DATE, TICKER, PRICE FROM Products"
-    dataframe = pd.read_sql_query(query, conn)
+    # Étape 2 : Données depuis la table Products
+    df_sql = pd.read_sql_query("SELECT IMPORT_DATE, TICKER, PRICE FROM Products", conn)
+    df = df_sql.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
 
-    # Pivot du DataFrame (tickers en colonnes)
-    df = dataframe.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
-
-    # Étape 3 : Calculs par ticker
     historique = []
 
     for ticker in df.columns[1:]:
@@ -61,20 +54,23 @@ def strat1():
                 variation = quantite * r
                 quantite += variation
                 spot = df.loc[df.index[j * 7 + 6], ticker]
+                trade_date = df.loc[df.index[j * 7 + 6], "IMPORT_DATE"]
+                trade_type = "Buy" if variation > 0 else "Sell"
+
                 historique.append({
                     "TICKER": ticker,
                     "spot": round(spot, 2),
                     "Rendement": round(r, 4),
                     "Variation_stock": int(variation),
                     "Quantité_totale": int(quantite),
-                    "depense/revenu": round(-variation * spot, 2)
+                    "depense/revenu": round(-variation * spot, 2),
+                    "trade": trade_type,
+                    "trade_date": trade_date
                 })
 
-    # Étape 4 : Mise à jour dans la base SQL
-    last_date = pd.to_datetime(df["IMPORT_DATE"].max()).strftime("%Y-%m-%d")
-    # Type d’opération
-    trade_type = "Buy" if variation > 0 else "Sell"
+    conn.close()
+    df_resultat = pd.DataFrame(historique)
+    print(df_resultat)
     return df_resultat
-strat(madata,"LOW_RISK")
 
 
