@@ -41,26 +41,24 @@ class RunAllStrat:
         
         # Then run the strategies
         print("Running strategies...")
-        self.strategy_one()
         self.strategy_two()
 
-    def strategy_one(self):
-        print("Running strategy one...")
 
-        # Connexion à la base
+    def strategy_two(self):
+
+        print("Running LOW_RISK strategy...")
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
-        risk_type = 'HY_EQUITY'
+        risk_type = "LOW_RISK"
 
-        # Quantités initiales
+        # Étape 1 : Quantités initiales
         quantites = {}
         query = "SELECT TICKER, QUANTITY FROM Portfolios WHERE RISK_TYPE = ?"
         cursor.execute(query, (risk_type,))
-        rows = cursor.fetchall()
-        for ticker, qte in rows:
+        for ticker, qte in cursor.fetchall():
             quantites[ticker] = qte
 
-        # Données depuis la table Products
+        # Étape 2 : Données depuis la table Products
         df_sql = pd.read_sql_query("SELECT IMPORT_DATE, TICKER, PRICE FROM Products", conn)
         df = df_sql.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
 
@@ -75,8 +73,7 @@ class RunAllStrat:
             if result:
                 manager_id, portfolio_id = result
                 df[f"rend_{ticker}"] = None
-
-                for i in range(6, len(df), 7):
+                for i in range(6, len(df), 7):  # tous les 7 jours (1er rendement à la 7e ligne)
                     price_today = df[ticker].iloc[i]
                     price_7_days_ago = df[ticker].iloc[i - 6]
                     rendement = (price_today - price_7_days_ago) / price_7_days_ago
@@ -102,16 +99,11 @@ class RunAllStrat:
                         "trade": trade_type,
                         "trade_date": trade_date
                     })
-
-        df_result = pd.DataFrame(historique)
-        print(df_result)  # Pour voir dans la console
         conn.close()
-        return df_result
-
-
-    def strategy_two(self):
-        # Placeholder for the second strategy logic
-        print("Running strategy two...")
+        df_resultat = pd.DataFrame(historique)
+        print(df_resultat)
+        return df_resultat
+    print("Running strategy two...")
 
     def run(self):
         # Schedule the update_strategy method to run every Monday
@@ -123,10 +115,10 @@ class RunAllStrat:
 
     def check_and_run_strategy(self):
         current_date = datetime.now()
-        #if self.start_date <= current_date <= self.end_date:
-        self.update_strategy()
-        #else:
-            #print("Current date is outside the specified range. Skipping update.")
+        if self.start_date <= current_date <= self.end_date:
+            self.update_strategy()
+        else:
+            print("Current date is outside the specified range. Skipping update.")
 
     def stop_update_strategy(self):
         # Placeholder for stopping the strategy update logic
