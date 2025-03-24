@@ -45,8 +45,69 @@ class RunAllStrat:
         self.strategy_two()
 
     def strategy_one(self):
-        # Placeholder for the first strategy logic
         print("Running strategy one...")
+
+        # Connexion à la base
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        risk_type = 'HY_EQUITY'
+
+        # Quantités initiales
+        quantites = {}
+        query = "SELECT TICKER, QUANTITY FROM Portfolios WHERE RISK_TYPE = ?"
+        cursor.execute(query, (risk_type,))
+        rows = cursor.fetchall()
+        for ticker, qte in rows:
+            quantites[ticker] = qte
+
+        # Données depuis la table Products
+        df_sql = pd.read_sql_query("SELECT IMPORT_DATE, TICKER, PRICE FROM Products", conn)
+        df = df_sql.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
+
+        historique = []
+
+        for ticker in df.columns[1:]:
+            cursor.execute("""
+                SELECT MANAGER_ID, ROWID FROM Portfolios
+                WHERE TICKER = ? AND RISK_TYPE = ?
+            """, (ticker, risk_type))
+            result = cursor.fetchone()
+            if result:
+                manager_id, portfolio_id = result
+                df[f"rend_{ticker}"] = None
+
+                for i in range(6, len(df), 7):
+                    price_today = df[ticker].iloc[i]
+                    price_7_days_ago = df[ticker].iloc[i - 6]
+                    rendement = (price_today - price_7_days_ago) / price_7_days_ago
+                    df.loc[df.index[i], f"rend_{ticker}"] = rendement
+
+                rendements = df[f"rend_{ticker}"].dropna().tolist()
+                quantite = quantites.get(ticker, 50)
+
+                for j, r in enumerate(rendements):
+                    variation = quantite * r
+                    quantite += variation
+                    spot = df.loc[df.index[j * 7 + 6], ticker]
+                    trade_date = df.loc[df.index[j * 7 + 6], "IMPORT_DATE"]
+                    trade_type = "Buy" if variation > 0 else "Sell"
+
+                    historique.append({
+                        "TICKER": ticker,
+                        "spot": round(spot, 2),
+                        "Rendement": round(r, 4),
+                        "Variation_stock": int(variation),
+                        "Quantité_totale": int(quantite),
+                        "depense/revenu": round(-variation * spot, 2),
+                        "trade": trade_type,
+                        "trade_date": trade_date
+                    })
+
+        df_result = pd.DataFrame(historique)
+        print(df_result)  # Pour voir dans la console
+        conn.close()
+        return df_result
+
 
     def strategy_two(self):
         # Placeholder for the second strategy logic
@@ -62,10 +123,10 @@ class RunAllStrat:
 
     def check_and_run_strategy(self):
         current_date = datetime.now()
-        if self.start_date <= current_date <= self.end_date:
-            self.update_strategy()
-        else:
-            print("Current date is outside the specified range. Skipping update.")
+        #if self.start_date <= current_date <= self.end_date:
+        self.update_strategy()
+        #else:
+            #print("Current date is outside the specified range. Skipping update.")
 
     def stop_update_strategy(self):
         # Placeholder for stopping the strategy update logic
