@@ -45,11 +45,10 @@ class RunAllStrat:
 
 
     def strategy_two(self):
-
-        print("Running LOW_RISK strategy...")
+        print("Running HY_EQUITY strategy...")
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
-        risk_type = "LOW_RISK"
+        risk_type = "HY_EQUITY" # Adapter au profil de risque adapté
 
         # Étape 1 : Quantités initiales
         quantites = {}
@@ -58,8 +57,9 @@ class RunAllStrat:
         for ticker, qte in cursor.fetchall():
             quantites[ticker] = qte
 
-        # Étape 2 : Données depuis la table Products
+        # Étape 2 : Données depuis Products
         df_sql = pd.read_sql_query("SELECT IMPORT_DATE, TICKER, PRICE FROM Products", conn)
+        df_sql["IMPORT_DATE"] = pd.to_datetime(df_sql["IMPORT_DATE"], dayfirst=True)
         df = df_sql.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
 
         historique = []
@@ -72,8 +72,9 @@ class RunAllStrat:
             result = cursor.fetchone()
             if result:
                 manager_id, portfolio_id = result
+                print(f"✓ Ticker trouvé : {ticker} avec Portfolio ID {portfolio_id}, Manager ID {manager_id}")
                 df[f"rend_{ticker}"] = None
-                for i in range(6, len(df), 7):  # tous les 7 jours (1er rendement à la 7e ligne)
+                for i in range(6, len(df), 7):
                     price_today = df[ticker].iloc[i]
                     price_7_days_ago = df[ticker].iloc[i - 6]
                     rendement = (price_today - price_7_days_ago) / price_7_days_ago
@@ -81,29 +82,44 @@ class RunAllStrat:
 
                 rendements = df[f"rend_{ticker}"].dropna().tolist()
                 quantite = quantites.get(ticker, 50)
-
+                print(f"→ Rendements calculés pour {ticker} : {rendements}")
                 for j, r in enumerate(rendements):
                     variation = quantite * r
                     quantite += variation
                     spot = df.loc[df.index[j * 7 + 6], ticker]
                     trade_date = df.loc[df.index[j * 7 + 6], "IMPORT_DATE"]
                     trade_type = "Buy" if variation > 0 else "Sell"
+                    quantity_traded = abs(int(variation))
 
-                    historique.append({
-                        "TICKER": ticker,
-                        "spot": round(spot, 2),
-                        "Rendement": round(r, 4),
-                        "Variation_stock": int(variation),
-                        "Quantité_totale": int(quantite),
-                        "depense/revenu": round(-variation * spot, 2),
-                        "trade": trade_type,
-                        "trade_date": trade_date
-                    })
+                    # ✅ Sécurité contre les erreurs d'intégrité
+                    if quantity_traded == 0 or spot is None or pd.isna(spot) or spot < 0:
+                        print(f"⚠️ Trade ignoré pour {ticker} à la date {trade_date} (quantité={quantity_traded}, spot={spot})")
+                        continue
+
+                    print(f"→ Insertion validée : {trade_type} {quantity_traded} x {ticker} @ {spot} le {trade_date}")
+
+                    # 🔁 Insertion dans Deals
+                    cursor.execute("""
+                        INSERT INTO Deals (
+                            PORTFOLIO_ID, TICKER, EXECUTION_DATE, MANAGER_ID,
+                            TRADE_TYPE, QUANTITY, BUY_PRICE
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        portfolio_id,
+                        ticker,
+                        trade_date.strftime("%Y-%m-%d"),
+                        manager_id,
+                        trade_type,
+                        quantity_traded,
+                        round(spot, 2)
+                    ))
+
+
+        conn.commit()
         conn.close()
         df_resultat = pd.DataFrame(historique)
         print(df_resultat)
         return df_resultat
-    print("Running strategy two...")
 
     def run(self):
         # Schedule the update_strategy method to run every Monday
