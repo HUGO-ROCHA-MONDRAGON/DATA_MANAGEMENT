@@ -16,7 +16,7 @@ sheet_pairs = [
     ("T_MINUS_ONE_C", "T_MINUS_TWO_C")
 ]
 
-# Labels for headers
+# Labels for custom headers
 label_map = {
     "T_MINUS_ONE_A": "FLABSA",
     "T_MINUS_ONE_B": "FLABSB",
@@ -55,7 +55,7 @@ FITCH_SCALE = S_AND_P_SCALE = {
     "CC": 20, "C": 21, "D": 22
 }
 
-# Rating change logic
+# Rating change detection
 def get_rating_change(row, agency):
     old_rating = row[f"{agency}_minus2"]
     new_rating = row[f"{agency}_minus1"]
@@ -69,7 +69,7 @@ def get_rating_change(row, agency):
 try:
     wb = load_workbook(excel_output)
     if output_wsname in wb.sheetnames:
-        del wb[output_wsname]  # Overwrite sheet
+        del wb[output_wsname]
     ws = wb.create_sheet(output_wsname)
 except FileNotFoundError:
     wb = Workbook()
@@ -83,31 +83,41 @@ for sheet1, sheet2 in sheet_pairs:
     t1 = pd.read_excel(excel_ratings, sheet_name=sheet1)
     t2 = pd.read_excel(excel_ratings, sheet_name=sheet2)
 
-    # Clean and rename columns
     for df in [t1, t2]:
         df["ISIN"] = df["ISIN"].astype(str).str.strip()
         df["Security_description"] = df["Security_description"].astype(str).str.strip()
 
+    # Rename rating and price columns in T-1
     t1 = t1.rename(columns={
-        "Moodys": "Moodys_minus1", "Fitch": "Fitch_minus1", "S&P": "S&P_minus1",
+        "Moodys": "Moodys_minus1",
+        "Fitch": "Fitch_minus1",
+        "S&P": "S&P_minus1",
         "Close price": "Close_price"
     })
+
+    # Rename only ratings in T-2
     t2 = t2.rename(columns={
-        "Moodys": "Moodys_minus2", "Fitch": "Fitch_minus2", "S&P": "S&P_minus2"
+        "Moodys": "Moodys_minus2",
+        "Fitch": "Fitch_minus2",
+        "S&P": "S&P_minus2"
     })
 
+    # Merge
     df = t1.merge(t2, on=["ISIN", "Security_description"], how="inner")
 
+    # Compute changes
     for agency in ["Moodys", "Fitch", "S&P"]:
         df[f"{agency}_change"] = df.apply(lambda row: get_rating_change(row, agency), axis=1)
 
+    # Keep only rows with at least one change
     changes = df[
         (df[["Moodys_change", "Fitch_change", "S&P_change"]] != "").any(axis=1)
     ][["ISIN", "Security_description", "Close_price", "Moodys_change", "Fitch_change", "S&P_change"]]
 
+    # Drop duplicate ISINs
     changes = changes.drop_duplicates(subset=["ISIN"])
 
-    # Section header
+    # Write section title
     label = label_map.get(sheet1, "Unknown")
     header_text = f"{label}: {minus_1.strftime('%d/%m/%Y')} vs {minus_2.strftime('%d/%m/%Y')}"
     ws.cell(row=start_row, column=1, value=header_text).font = bold_font
@@ -134,7 +144,7 @@ for sheet1, sheet2 in sheet_pairs:
                 cell.border = thin_border
                 cell.alignment = center_align
 
-                # Conditional coloring (rating columns only)
+                # Conditional coloring for rating change cells
                 if col_idx >= 4 and isinstance(value, str) and "→" in value:
                     left, right = value.split("→")
                     left = left.strip().replace("(", "").replace(")", "")
@@ -162,7 +172,7 @@ for sheet1, sheet2 in sheet_pairs:
             start_row += 1
         start_row += 1
 
-# Auto-fit column widths
+# Auto column widths
 for column_cells in ws.columns:
     max_len = 0
     col_letter = get_column_letter(column_cells[0].column)
@@ -171,6 +181,6 @@ for column_cells in ws.columns:
             max_len = max(max_len, len(str(cell.value)))
     ws.column_dimensions[col_letter].width = max_len + 2
 
-# Save file
+# Save
 wb.save(excel_output)
 print(f"Data inserted into '{output_wsname}' in {excel_output}")
