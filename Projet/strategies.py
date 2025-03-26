@@ -13,19 +13,22 @@ class RunAllStrat:
         self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
         self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
         self.tickers = tickers
+        self.stop_flag = False  # Ajouter un flag pour arrêter proprement
 
-    def update_products_for_last_week(self):
-        """Updates the Products table with data from the previous week."""
-        current_date = datetime.now()
-        # Calculate last week's date range
-        week_end = current_date - timedelta(days=current_date.weekday() + 1)  # Previous Sunday
-        week_start = week_end - timedelta(days=6)  # Previous Monday
+    def update_products_for_last_week(self, simulation_date):
+        """Updates the Products table with data from the previous week of the simulation date."""
+        # Utiliser la date de simulation au lieu de datetime.now()
+        current_date = simulation_date
+        
+        # Calculer la semaine précédente par rapport à la date simulée
+        week_end = current_date - timedelta(days=1)  # Dimanche précédent
+        week_start = week_end - timedelta(days=6)  # Lundi précédent
         
         # Format dates for BaseUpdate
         week_start_str = week_start.strftime("%d/%m/%Y")
         week_end_str = week_end.strftime("%d/%m/%Y")
         
-        print(f"Updating products for last week: {week_start_str} to {week_end_str}")
+        print(f"Updating products for historical week: {week_start_str} to {week_end_str}")
         
         # Create BaseUpdate instance and update products
         updater = BaseUpdate(
@@ -35,110 +38,145 @@ class RunAllStrat:
         )
         updater.update_products(self.db_file)
 
-    def update_strategy(self):
-        # First update products with last week's data
-        self.update_products_for_last_week()
-        
-        # Then run the strategies
+    def update_strategy(self, simulation_date):
+        self.update_products_for_last_week(simulation_date)
         print("Running strategies...")
-        self.strategy_two()
+        self.strategy_two(simulation_date)
 
-
-    def strategy_two(self):
+    def strategy_two(self, simulation_date):
         print("Running HY_EQUITY strategy...")
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        risk_type = "HY_EQUITY" # Adapter au profil de risque adapté
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            risk_type = "HY_EQUITY"
 
-        # Étape 1 : Quantités initiales
-        quantites = {}
-        query = "SELECT TICKER, QUANTITY FROM Portfolios WHERE RISK_TYPE = ?"
-        cursor.execute(query, (risk_type,))
-        for ticker, qte in cursor.fetchall():
-            quantites[ticker] = qte
+            # Étape 1 : Récupérer les portfolios existants
+            portfolios = {}
+            query = """
+                SELECT p.TICKER, p.QUANTITY, p.ROWID as PORTFOLIO_ID, p.MANAGER_ID 
+                FROM Portfolios p 
+                WHERE p.RISK_TYPE = ?
+            """
+            cursor.execute(query, (risk_type,))
+            for ticker, quantity, portfolio_id, manager_id in cursor.fetchall():
+                portfolios[ticker] = {
+                    'quantity': quantity,
+                    'portfolio_id': portfolio_id,
+                    'manager_id': manager_id
+                }
 
-        # Étape 2 : Données depuis Products
-        df_sql = pd.read_sql_query("SELECT IMPORT_DATE, TICKER, PRICE FROM Products", conn)
-        df_sql["IMPORT_DATE"] = pd.to_datetime(df_sql["IMPORT_DATE"], dayfirst=True)
-        df = df_sql.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
+            # Étape 2 : Données depuis Products (seulement la dernière semaine)
+            df_sql = pd.read_sql_query("""
+                SELECT IMPORT_DATE, TICKER, PRICE 
+                FROM Products 
+                WHERE IMPORT_DATE >= date('now', '-7 days')
+                ORDER BY IMPORT_DATE, TICKER
+            """, conn)
+            
+            df_sql["IMPORT_DATE"] = pd.to_datetime(df_sql["IMPORT_DATE"], dayfirst=True)
 
-        historique = []
+            # Pour chaque ticker dans le portfolio
+            for ticker, portfolio_info in portfolios.items():
+                print(f"✓ Ticker trouvé : {ticker} avec Portfolio ID {portfolio_info['portfolio_id']}, Manager ID {portfolio_info['manager_id']}")
+                
+                ticker_data = df_sql[df_sql['TICKER'] == ticker].sort_values('IMPORT_DATE')
+                if len(ticker_data) < 2:
+                    print(f"⚠️ Pas assez de données pour {ticker} sur la dernière semaine, ignoré")
+                    continue
 
-        for ticker in df.columns[1:]:
-            cursor.execute("""
-                SELECT MANAGER_ID, ROWID FROM Portfolios
-                WHERE TICKER = ? AND RISK_TYPE = ?
-            """, (ticker, risk_type))
-            result = cursor.fetchone()
-            if result:
-                manager_id, portfolio_id = result
-                print(f"✓ Ticker trouvé : {ticker} avec Portfolio ID {portfolio_id}, Manager ID {manager_id}")
-                df[f"rend_{ticker}"] = None
-                for i in range(6, len(df), 7):
-                    price_today = df[ticker].iloc[i]
-                    price_7_days_ago = df[ticker].iloc[i - 6]
-                    rendement = (price_today - price_7_days_ago) / price_7_days_ago
-                    df.loc[df.index[i], f"rend_{ticker}"] = rendement
+                try:
+                    price_today = ticker_data.iloc[-1]['PRICE']
+                    price_week_ago = ticker_data.iloc[0]['PRICE']
+                    rendement = (price_today - price_week_ago) / price_week_ago
+                    current_quantity = portfolio_info['quantity']
 
-                rendements = df[f"rend_{ticker}"].dropna().tolist()
-                quantite = quantites.get(ticker, 50)
-                print(f"→ Rendements calculés pour {ticker} : {rendements}")
-                for j, r in enumerate(rendements):
-                    variation = quantite * r
-                    quantite += variation
-                    spot = df.loc[df.index[j * 7 + 6], ticker]
-                    trade_date = df.loc[df.index[j * 7 + 6], "IMPORT_DATE"]
-                    trade_type = "Buy" if variation > 0 else "Sell"
-                    quantity_traded = abs(int(variation))
+                    # Calculer la variation
+                    variation = int(current_quantity * rendement)
 
-                    # ✅ Sécurité contre les erreurs d'intégrité
-                    if quantity_traded == 0 or spot is None or pd.isna(spot) or spot < 0:
-                        print(f"⚠️ Trade ignoré pour {ticker} à la date {trade_date} (quantité={quantity_traded}, spot={spot})")
+                    if variation == 0:
+                        print(f"⚠️ Trade ignoré pour {ticker} (variation nulle)")
                         continue
 
-                    print(f"→ Insertion validée : {trade_type} {quantity_traded} x {ticker} @ {spot} le {trade_date}")
-
-                    # 🔁 Insertion dans Deals
+                    # Utiliser la date de simulation pour l'insertion
                     cursor.execute("""
                         INSERT INTO Deals (
                             PORTFOLIO_ID, TICKER, EXECUTION_DATE, MANAGER_ID,
                             TRADE_TYPE, QUANTITY, BUY_PRICE
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        portfolio_id,
+                        portfolio_info['portfolio_id'],
                         ticker,
-                        trade_date.strftime("%Y-%m-%d"),
-                        manager_id,
-                        trade_type,
-                        quantity_traded,
-                        round(spot, 2)
+                        simulation_date.strftime("%Y-%m-%d"),
+                        portfolio_info['manager_id'],
+                        "Buy" if variation > 0 else "Sell",
+                        abs(variation),
+                        price_today
                     ))
 
+                    # Mettre à jour le Portfolio avec la date de simulation
+                    new_quantity = current_quantity + variation
+                    cursor.execute("""
+                        UPDATE Portfolios 
+                        SET QUANTITY = ?,
+                            LAST_UPDATED = ?,
+                            SPOT_PRICE = ?
+                        WHERE ROWID = ?
+                    """, (
+                        new_quantity,
+                        simulation_date.strftime("%Y-%m-%d"),
+                        price_today,
+                        portfolio_info['portfolio_id']
+                    ))
 
-        conn.commit()
-        conn.close()
-        df_resultat = pd.DataFrame(historique)
-        print(df_resultat)
-        return df_resultat
+                    print(f"→ Insertion validée : {'Buy' if variation > 0 else 'Sell'} {abs(variation)} x {ticker} @ {price_today} le {simulation_date.strftime('%Y-%m-%d')}")
+                    print(f"✓ Portfolio mis à jour pour {ticker}: nouvelle quantité ajustée de {variation}")
+
+                    conn.commit()
+
+                except Exception as e:
+                    print(f"Erreur lors du traitement de {ticker}: {e}")
+                    continue
+
+        except Exception as e:
+            print(f"Erreur globale dans strategy_two: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
 
     def run(self):
-        # Schedule the update_strategy method to run every Monday
-        schedule.every().monday.do(self.check_and_run_strategy)
+        try:
+            print(f"\nDébut de la simulation historique du {self.start_date.strftime('%d/%m/%Y')} au {self.end_date.strftime('%d/%m/%Y')}")
+            
+            current_date = self.start_date
+            lundis_simulés = 0
+            
+            while current_date <= self.end_date:
+                if current_date.weekday() == 0:
+                    print(f"\n=== Simulation pour le lundi {current_date.strftime('%d/%m/%Y')} ===")
+                    self.check_and_run_strategy(simulation_date=current_date)
+                    lundis_simulés += 1
+                
+                current_date += timedelta(days=1)
+                
+            print(f"\nSimulation terminée !")
+            print(f"Nombre de lundis simulés : {lundis_simulés}")
+            print(f"Période couverte : {self.start_date.strftime('%d/%m/%Y')} au {self.end_date.strftime('%d/%m/%Y')}")
+                
+        except Exception as e:
+            print(f"Erreur dans la simulation : {e}")
 
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
-
-    def check_and_run_strategy(self):
-        current_date = datetime.now()
-        if self.start_date <= current_date <= self.end_date:
-            self.update_strategy()
-        else:
-            print("Current date is outside the specified range. Skipping update.")
+    def check_and_run_strategy(self, simulation_date):
+        """
+        Exécute la stratégie pour une date historique donnée
+        """
+        print(f"Exécution de la stratégie pour la date historique : {simulation_date.strftime('%d/%m/%Y')}")
+        self.update_strategy(simulation_date)
 
     def stop_update_strategy(self):
-        # Placeholder for stopping the strategy update logic
-        print("Stopping strategy update...")
+        self.stop_flag = True
+        print("Arrêt propre de la stratégie...")
+        # Nettoyage des tâches planifiées
+        schedule.clear()
 
 # Example usage
 #if __name__ == "__main__":
