@@ -73,4 +73,94 @@ def strategy_low_risk(self):
     print(df_resultat)
     return df_resultat
 
+import sqlite3
+import pandas as pd
+import numpy as np
+
+update_portefeuille1(db_file,['AAPL','MSFT'],'HY_EQUITY',50)
+tickers_macro = [
+    "SPY",       # US S&P 500 ETF
+    "CAC40.PA",  # CAC 40
+    "DAXEX.DE",  # DAX
+    "ISF.L",     # FTSE 100 (Londres)
+    "EWJ",       # Japon (Asie)
+    "BND",       # US Treasury Bonds
+    "GLD"        # Gold (autre classe d’actif)
+]
+tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'FB', 'TSLA', 'NVDA', 'PYPL', 'ADBE', 'INTC',"SPY", "CAC40.PA",  "DAXEX.DE", "ISF.L","EWJ","BND","GLD"]
+update_portefeuille2("Fund.db", tickers_macro, "LOW_RISK")
+def strategie_montecarlo_vol_limitee(db_file, risk_type, vol_max=0.10, simulations=3000, nb_days=252):
+    """
+    Construit un portefeuille avec une volatilité inférieure à vol_max
+    en utilisant une simulation Monte Carlo sur les données extraites de la base Products.
+    
+    Args:
+        db_file (str): Chemin vers la base de données SQLite
+        risk_type (str): Type de portefeuille (LOW_RISK, etc.)
+        vol_max (float): Volatilité maximale cible (ex: 0.10 pour 10%)
+        simulations (int): Nombre de portefeuilles simulés
+        nb_days (int): Nombre de jours pour annualiser (252 pour 1 an)
+    
+    Returns:
+        dict: Quantités optimales pour chaque actif sous forme de {ticker: quantité}
+    """
+    conn = sqlite3.connect(db_file)
+    
+    # Récupérer les derniers prix pour chaque ticker unique
+    query = """
+    SELECT TICKER, MAX(IMPORT_DATE) as DATE
+    FROM Products
+    GROUP BY TICKER
+    """
+    latest_dates = pd.read_sql_query(query, conn)
+    
+    tickers = latest_dates['TICKER'].tolist()
+    
+    # Récupérer les historiques complets
+    price_data = pd.read_sql_query("SELECT TICKER, IMPORT_DATE, PRICE FROM Products", conn)
+    conn.close()
+    
+    # Pivot pour créer un DataFrame de prix par ticker
+    price_pivot = price_data.pivot(index="IMPORT_DATE", columns="TICKER", values="PRICE")
+    price_pivot = price_pivot.sort_index().dropna(axis=1)  # Retirer les colonnes incomplètes
+
+    # Recalculer les tickers valides après nettoyage
+    tickers = price_pivot.columns.tolist()
+
+    # Calcul des rendements log
+    log_returns = np.log(price_pivot / price_pivot.shift(1)).dropna()
+
+    # Simulation Monte Carlo
+    np.random.seed(42)
+    best_weights = None
+    best_cost = np.inf
+
+    for _ in range(simulations):
+        weights = np.random.random(len(tickers))
+        weights /= np.sum(weights)
+
+        expected_vol = np.sqrt(np.dot(weights.T, np.dot(log_returns.cov() * nb_days, weights)))
+
+        if expected_vol <= vol_max:
+            # Calculer le coût (somme pondérée des derniers prix)
+            latest_prices = price_pivot.iloc[-1].values
+            total_cost = np.dot(weights, latest_prices)
+
+            if total_cost < best_cost:
+                best_cost = total_cost
+                best_weights = weights
+
+    if best_weights is None:
+        return {"message": "Aucun portefeuille n'a une volatilité < 10% après simulation."}
+
+    # Convertir les poids en quantités entières
+    latest_prices = price_pivot.iloc[-1]
+    quantities = (best_weights * 10000 / latest_prices).astype(int)  # 10000 arbitrairement comme budget fictif
+
+    return dict(zip(tickers, quantities))
+
+# Exemple d'appel
+# strategie_montecarlo_vol_limitee("Fund.db", "LOW_RISK", 0.10)
+
+
 
