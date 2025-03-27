@@ -79,14 +79,15 @@ class DatabaseBuilder:
             FOREIGN KEY(MANAGER_ID) REFERENCES Managers(MANAGER_ID) ON DELETE SET NULL
         );"""
 
-        create_history_table_query = """CREATE TABLE IF NOT EXISTS Portfolio_History (
-             HISTORY_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-             MANAGER_ID INTEGER NOT NULL,
-             TICKER TEXT NOT NULL,
-             QUANTITY INTEGER NOT NULL,
-             DATE_SNAPSHOT DATE NOT NULL,
-             FOREIGN KEY(MANAGER_ID) REFERENCES Managers(MANAGER_ID) ON DELETE CASCADE
-         );"""
+        create_history_table_query = """
+        CREATE TABLE IF NOT EXISTS Portfolio_History (
+            HISTORY_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            RISK_TYPE TEXT NOT NULL,
+            TICKER TEXT NOT NULL,
+            QUANTITY INTEGER NOT NULL,
+            DATE_SNAPSHOT DATE NOT NULL
+        );"""
+
  
         try:
             conn = sqlite3.connect(self.db_file)
@@ -375,7 +376,6 @@ class DatabaseBuilder:
             if conn:
                 conn.close()
             
-
     def rebuild_portfolio_history_by_risk_type(self, risk_type):
         try:
             conn = sqlite3.connect(self.db_file)
@@ -383,57 +383,53 @@ class DatabaseBuilder:
 
             # 1. Composition initiale des portefeuilles ayant ce type de risque
             cursor.execute("""
-                SELECT MANAGER_ID, TICKER, QUANTITY
+                SELECT TICKER, QUANTITY
                 FROM Portfolios
                 WHERE RISK_TYPE = ?
             """, (risk_type,))
             initial_assets = cursor.fetchall()
 
-            # Dictionnaire de portefeuilles par manager
-            portfolios = defaultdict(dict)
-            for manager_id, ticker, qty in initial_assets:
-                portfolios[manager_id][ticker] = qty
+            # Portefeuille global (non plus par manager)
+            portfolio = {ticker: qty for ticker, qty in initial_assets}
 
             # 2. Récupérer les deals triés par date pour ce risk_type
             cursor.execute("""
-                SELECT DATE(EXECUTION_DATE), MANAGER_ID, TICKER, TRADE_TYPE, QUANTITY
+                SELECT DATE(EXECUTION_DATE), TICKER, TRADE_TYPE, QUANTITY
                 FROM Deals
                 WHERE RISK_TYPE = ?
                 ORDER BY EXECUTION_DATE ASC
             """, (risk_type,))
             deals = cursor.fetchall()
 
-            # 3. Grouper les deals [par manager_id][par date]
-            grouped_deals = defaultdict(lambda: defaultdict(list))
-            for date, manager_id, ticker, trade_type, qty in deals:
-                grouped_deals[manager_id][date].append((ticker, trade_type, qty))
+            # 3. Grouper les deals par date
+            deals_by_date = defaultdict(list)
+            for date, ticker, trade_type, qty in deals:
+                deals_by_date[date].append((ticker, trade_type, qty))
 
-            # 4. Appliquer les deals par manager et par date
-            for manager_id, deals_by_date in grouped_deals.items():
-                portfolio = portfolios.get(manager_id, {})  # récupérer ou init portefeuille
+            # 4. Appliquer les deals et sauvegarder un snapshot unique par date
+            for date in sorted(deals_by_date.keys()):
+                for ticker, trade_type, qty in deals_by_date[date]:
+                    if trade_type == 'Buy':
+                        portfolio[ticker] = portfolio.get(ticker, 0) + qty
+                    elif trade_type == 'Sell':
+                        portfolio[ticker] = max(portfolio.get(ticker, 0) - qty, 0)
 
-                for date in sorted(deals_by_date.keys()):
-                    for ticker, trade_type, qty in deals_by_date[date]:
-                        if trade_type == 'Buy':
-                            portfolio[ticker] = portfolio.get(ticker, 0) + qty
-                        elif trade_type == 'Sell':
-                            portfolio[ticker] = max(portfolio.get(ticker, 0) - qty, 0)
+                # Nettoyage des actifs à 0
+                portfolio = {k: v for k, v in portfolio.items() if v > 0}
 
-                    # Nettoyage des actifs à 0
-                    portfolio = {k: v for k, v in portfolio.items() if v > 0}
-
-                    # Sauvegarde du snapshot pour ce manager à cette date
-                    for tick, qte in portfolio.items():
-                        cursor.execute("""
-                            INSERT INTO Portfolio_History (MANAGER_ID, TICKER, QUANTITY, DATE_SNAPSHOT)
-                            VALUES (?, ?, ?, ?)
-                        """, (manager_id, tick, qte, date))
+                # Insertion snapshot
+                for tick, qte in portfolio.items():
+                    cursor.execute("""
+                        INSERT INTO Portfolio_History (RISK_TYPE, TICKER, QUANTITY, DATE_SNAPSHOT)
+                        VALUES (?, ?, ?, ?)
+                    """, (risk_type, tick, qte, date))
 
             conn.commit()
-            print(f"✅ Historique reconstruit pour les portefeuilles de type {risk_type}")
+            print(f"✅ Historique reconstruit pour RISK_TYPE = '{risk_type}'")
         except sqlite3.Error as e:
             print(f"❌ Erreur SQLite : {e}")
         finally:
             if conn:
                 conn.close()
+
 
