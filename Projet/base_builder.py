@@ -3,7 +3,6 @@ from faker import Faker
 import random
 import pandas as pd
 from datetime import date, timedelta
-from collections import defaultdict
  
 fake = Faker()
 #test abdel
@@ -55,7 +54,7 @@ class DatabaseBuilder:
         );"""
  
         Query_portfolio = """CREATE TABLE IF NOT EXISTS Portfolios (
-            PORTFOLIO_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            INPUT_ID INTEGER PRIMARY KEY AUTOINCREMENT,
             RISK_TYPE TEXT CHECK(RISK_TYPE IN ('LOW_RISK', 'LOW_TURNOVER', 'HY_EQUITY')) NOT NULL,
             TICKER TEXT NOT NULL,
             QUANTITY INTEGER CHECK(QUANTITY >= 0) NOT NULL,
@@ -67,26 +66,16 @@ class DatabaseBuilder:
  
         Query_deals = """CREATE TABLE IF NOT EXISTS Deals (
             DEAL_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-            PORTFOLIO_ID INTEGER NOT NULL,
+            RISK_TYPE TEXT CHECK(RISK_TYPE IN ('LOW_RISK', 'LOW_TURNOVER', 'HY_EQUITY')) NOT NULL,
             TICKER TEXT NOT NULL,
             EXECUTION_DATE TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             MANAGER_ID INTEGER NOT NULL,
             TRADE_TYPE TEXT CHECK(TRADE_TYPE IN ('Buy', 'Sell')) NOT NULL,
             QUANTITY INTEGER CHECK(QUANTITY > 0) NOT NULL,
             BUY_PRICE REAL CHECK(BUY_PRICE >= 0) NOT NULL,
-            FOREIGN KEY(PORTFOLIO_ID) REFERENCES Portfolios(PORTFOLIO_ID) ON DELETE CASCADE,
+            FOREIGN KEY(RISK_TYPE) REFERENCES Portfolios(RISK_TYPE) ON DELETE CASCADE,
             FOREIGN KEY(MANAGER_ID) REFERENCES Managers(MANAGER_ID) ON DELETE SET NULL
         );"""
-        create_history_table_query = """
-        CREATE TABLE IF NOT EXISTS Portfolio_History (
-            HISTORY_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-            MANAGER_ID INTEGER NOT NULL,
-            TICKER TEXT NOT NULL,
-            QUANTITY INTEGER NOT NULL,
-            DATE_SNAPSHOT DATE NOT NULL,
-            FOREIGN KEY(MANAGER_ID) REFERENCES Managers(MANAGER_ID) ON DELETE CASCADE
-        );"""
-
  
         try:
             conn = sqlite3.connect(self.db_file)
@@ -97,7 +86,6 @@ class DatabaseBuilder:
             cursor.execute(Query_clients)
             cursor.execute(Query_portfolio)
             cursor.execute(Query_deals)
-            cursor.execute(create_history_table_query)
             conn.commit()
             print("Tables created successfully.")
         except sqlite3.Error as e:
@@ -125,7 +113,7 @@ class DatabaseBuilder:
         for _ in range(n):
             FIRST_NAME = fake.first_name()
             LAST_NAME = fake.last_name()
-            EMAIL = fake.email()
+            EMAIL = FIRST_NAME + "_" + LAST_NAME + "@gmail.com"
             PHONE = fake.phone_number()
             BIRTH_DATE = fake.date_of_birth(minimum_age=18, maximum_age=80)
             BIRTH_DATE_STR = BIRTH_DATE.strftime("%d/%m/%Y")
@@ -148,7 +136,7 @@ class DatabaseBuilder:
         for _ in range(l):
             FIRST_NAME = fake.first_name()
             LAST_NAME = fake.last_name()
-            EMAIL = fake.email()
+            EMAIL = FIRST_NAME + "_" + LAST_NAME + "@aeou_management.com"
             PHONE = fake.phone_number()
             BIRTH_DATE_OBJ = fake.date_of_birth(minimum_age=18, maximum_age=65)
             BIRTH_DATE = BIRTH_DATE_OBJ.isoformat()              
@@ -205,104 +193,49 @@ class DatabaseBuilder:
                 conn.close()
  
    
-    def update_asset_under_management(self):
-        """Calcule les AUM de chaque manager en fonction des clients ayant le même RISK_TYPE que ses portefeuilles."""
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-    
-            # Étape 1 : Récupérer tous les managers et leurs RISK_TYPE (via Portfolios)
-            cursor.execute("""
-                SELECT DISTINCT MANAGER_ID, RISK_TYPE
-                FROM Portfolios
-            """)
-            manager_risk_map = cursor.fetchall()
-    
-            # Étape 2 : Dictionnaire pour stocker la somme par manager
-            manager_aum = {}
-    
-            for manager_id, risk_type in manager_risk_map:
-                # Étape 3 : Somme des montants investis par les clients ayant ce RISK_TYPE
-                cursor.execute("""
-                    SELECT SUM(INVESTMENT_AMOUNT)
-                    FROM Clients
-                    WHERE RISK_TYPE = ?
-                """, (risk_type,))
-                total_invested = cursor.fetchone()[0] or 0  # évite None
-    
-                # Si un manager gère plusieurs types de risque, on cumule
-                if manager_id in manager_aum:
-                    manager_aum[manager_id] += total_invested
-                else:
-                    manager_aum[manager_id] = total_invested
-    
-            # Étape 4 : Mise à jour de la colonne ASSET_UNDER_MANAGEMENT dans Managers
-            for manager_id, aum in manager_aum.items():
-                cursor.execute("""
-                    UPDATE Managers
-                    SET ASSET_UNDER_MANAGEMENT = ?
-                    WHERE MANAGER_ID = ?
-                """, (aum, manager_id))
-    
-            conn.commit()
-        except sqlite3.Error as e:
-            print(f"❌ Erreur SQLite : {e}")
-        finally:
-            if conn:
-                conn.close()
+def update_asset_under_management(self):
+    """Calcule les AUM de chaque manager en fonction des clients ayant le même RISK_TYPE que ses portefeuilles."""
+    try:
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
  
-
-    def rebuild_portfolio_history_by_manager(self, manager_id):
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-
-            # 1. Composition initiale du portefeuille
+        # Étape 1 : Récupérer tous les managers et leurs RISK_TYPE (via Portfolios)
+        cursor.execute("""
+            SELECT DISTINCT MANAGER_ID, RISK_TYPE
+            FROM Portfolios
+        """)
+        manager_risk_map = cursor.fetchall()
+ 
+        # Étape 2 : Dictionnaire pour stocker la somme par manager
+        manager_aum = {}
+ 
+        for manager_id, risk_type in manager_risk_map:
+            # Étape 3 : Somme des montants investis par les clients ayant ce RISK_TYPE
             cursor.execute("""
-                SELECT TICKER, QUANTITY
-                FROM Portfolios
-                WHERE MANAGER_ID = ?
-            """, (manager_id,))
-            initial_assets = cursor.fetchall()
-            portfolio = {ticker: qty for ticker, qty in initial_assets}
-
-            # 2. Regrouper tous les deals par date
+                SELECT SUM(INVESTMENT_AMOUNT)
+                FROM Clients
+                WHERE RISK_TYPE = ?
+            """, (risk_type,))
+            total_invested = cursor.fetchone()[0] or 0  # évite None
+ 
+            # Si un manager gère plusieurs types de risque, on cumule
+            if manager_id in manager_aum:
+                manager_aum[manager_id] += total_invested
+            else:
+                manager_aum[manager_id] = total_invested
+ 
+        # Étape 4 : Mise à jour de la colonne ASSET_UNDER_MANAGEMENT dans Managers
+        for manager_id, aum in manager_aum.items():
             cursor.execute("""
-                SELECT DATE(EXECUTION_DATE), TICKER, TRADE_TYPE, QUANTITY
-                FROM Deals
+                UPDATE Managers
+                SET ASSET_UNDER_MANAGEMENT = ?
                 WHERE MANAGER_ID = ?
-                ORDER BY EXECUTION_DATE ASC
-            """, (manager_id,))
-            deals = cursor.fetchall()
-
-            # 3. Grouper les deals par date
-            deals_by_date = defaultdict(list)
-            for date, ticker, trade_type, qty in deals:
-                deals_by_date[date].append((ticker, trade_type, qty))
-
-            # 4. Appliquer les deals jour par jour et insérer un seul snapshot
-            for date in sorted(deals_by_date.keys()):
-                for ticker, trade_type, qty in deals_by_date[date]:
-                    if trade_type == 'Buy':
-                        portfolio[ticker] = portfolio.get(ticker, 0) + qty
-                    elif trade_type == 'Sell':
-                        portfolio[ticker] = max(portfolio.get(ticker, 0) - qty, 0)
-
-                # Nettoyage des actifs à 0
-                portfolio = {k: v for k, v in portfolio.items() if v > 0}
-
-                # Insertion unique du snapshot
-                for tick, qte in portfolio.items():
-                    cursor.execute("""
-                        INSERT INTO Portfolio_History (MANAGER_ID, TICKER, QUANTITY, DATE_SNAPSHOT)
-                        VALUES (?, ?, ?, ?)
-                    """, (manager_id, tick, qte, date))
-
-            conn.commit()
-            print(f"✅ Historique reconstruit (1 snapshot/jour) pour le manager {manager_id}")
-        except sqlite3.Error as e:
-            print(f"❌ Erreur SQLite : {e}")
-        finally:
-            if conn:
-                conn.close()
-
+            """, (aum, manager_id))
+ 
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"❌ Erreur SQLite : {e}")
+    finally:
+        if conn:
+            conn.close()
+ 

@@ -53,16 +53,17 @@ class RunAllStrat:
             # Étape 1 : Récupérer les portfolios existants
             portfolios = {}
             query = """
-                SELECT p.TICKER, p.QUANTITY, p.ROWID as PORTFOLIO_ID, p.MANAGER_ID 
+                SELECT p.TICKER, p.QUANTITY, p.ROWID, p.MANAGER_ID 
                 FROM Portfolios p 
                 WHERE p.RISK_TYPE = ?
             """
             cursor.execute(query, (risk_type,))
-            for ticker, quantity, portfolio_id, manager_id in cursor.fetchall():
+            for ticker, quantity, rowid, manager_id in cursor.fetchall():
                 portfolios[ticker] = {
                     'quantity': quantity,
-                    'portfolio_id': portfolio_id,
-                    'manager_id': manager_id
+                    'ROWID': rowid,
+                    'manager_id': manager_id,
+                    'risk_type': risk_type
                 }
 
             # Étape 2 : Données depuis Products (seulement la dernière semaine)
@@ -77,7 +78,7 @@ class RunAllStrat:
 
             # Pour chaque ticker dans le portfolio
             for ticker, portfolio_info in portfolios.items():
-                print(f"✓ Ticker trouvé : {ticker} avec Portfolio ID {portfolio_info['portfolio_id']}, Manager ID {portfolio_info['manager_id']}")
+                print(f"✓ Ticker trouvé : {ticker} avec Le risque {portfolio_info['risk_type']}, Manager ID {portfolio_info['manager_id']}")
                 
                 ticker_data = df_sql[df_sql['TICKER'] == ticker].sort_values('IMPORT_DATE')
                 if len(ticker_data) < 2:
@@ -100,11 +101,11 @@ class RunAllStrat:
                     # Utiliser la date de simulation pour l'insertion
                     cursor.execute("""
                         INSERT INTO Deals (
-                            PORTFOLIO_ID, TICKER, EXECUTION_DATE, MANAGER_ID,
+                            RISK_TYPE, TICKER, EXECUTION_DATE, MANAGER_ID,
                             TRADE_TYPE, QUANTITY, BUY_PRICE
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        portfolio_info['portfolio_id'],
+                        portfolio_info['risk_type'],  # Utiliser INPUT_ID comme PORTFOLIO_ID
                         ticker,
                         simulation_date.strftime("%Y-%m-%d"),
                         portfolio_info['manager_id'],
@@ -125,7 +126,7 @@ class RunAllStrat:
                         new_quantity,
                         simulation_date.strftime("%Y-%m-%d"),
                         price_today,
-                        portfolio_info['portfolio_id']
+                        portfolio_info['ROWID']
                     ))
 
                     print(f"→ Insertion validée : {'Buy' if variation > 0 else 'Sell'} {abs(variation)} x {ticker} @ {price_today} le {simulation_date.strftime('%Y-%m-%d')}")
@@ -136,6 +137,11 @@ class RunAllStrat:
                 except Exception as e:
                     print(f"Erreur lors du traitement de {ticker}: {e}")
                     continue
+
+            # Ajouter au début de strategy_two
+            cursor.execute("SELECT DISTINCT RISK_TYPE FROM Portfolios")
+            risk_types = cursor.fetchall()
+            print(f"Risk types disponibles dans la base : {risk_types}")
 
         except Exception as e:
             print(f"Erreur globale dans strategy_two: {e}")
