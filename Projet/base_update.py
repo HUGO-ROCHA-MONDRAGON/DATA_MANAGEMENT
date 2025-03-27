@@ -5,14 +5,15 @@ import sqlite3
 
 
 class BaseUpdate: 
-    def __init__(self, tickers, start_date, end_date):
+    def __init__(self, tickers, start_date, end_date, db_file):
         self.tickers = tickers
         self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
         self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
+        self.db_file = db_file
         self.all_data = None
         self.data_collector = GetData()
 
-    def update_products(self, db_file):
+    def update_products(self):
         """
         Updates the Products table with new market data for a specific date range.
         
@@ -47,7 +48,7 @@ class BaseUpdate:
             df_filtered['IMPORT_DATE'] = df_filtered['IMPORT_DATE'].dt.strftime('%d/%m/%Y')
             
             # Connect to the database
-            conn = sqlite3.connect(db_file)
+            conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
             
             # Prepare the insert query
@@ -79,42 +80,104 @@ class BaseUpdate:
         finally:
             if 'conn' in locals():
                 conn.close()
-def update_portefeuille1(db_file,tickers,risk_type,quantité_initiale):
-    
-    # Connexion à la base
-    conn = sqlite3.connect(db_file)
-    cursor = conn.cursor()
+                    
+    def initialisation_portefeuille_HY(self):
+        """Initialise le portefeuille HY_EQUITY en achetant les 5 tickers avec les meilleurs rendements"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        risk_type = "HY_EQUITY"
+        
+        try:
+            # Vérifier si le portefeuille est déjà initialisé
+            cursor.execute("""
+                SELECT COUNT(*) FROM Portfolios 
+                WHERE RISK_TYPE = ? AND TICKER != 'CASH'
+            """, (risk_type,))
+            if cursor.fetchone()[0] > 0:
+                print(f"Le portefeuille {risk_type} est déjà initialisé")
+                return
 
-    # Étape 1 : récupérer le MANAGER_ID de la table Managers
-    cursor.execute("SELECT MANAGER_ID FROM Managers ORDER BY MANAGER_ID LIMIT 1")
-    manager_id = cursor.fetchone()[0]  # prend le premier manager
+            # Vérifier le cash disponible
+            cursor.execute("""
+                SELECT QUANTITY FROM Portfolios 
+                WHERE RISK_TYPE = ? AND TICKER = 'CASH'
+            """, (risk_type,))
+            cash_result = cursor.fetchone()
+            if not cash_result or cash_result[0] < 1000:
+                print(f"Pas assez de cash disponible pour {risk_type} (minimum 1000)")
+                return
+            cash_amount = cash_result[0]
+            print(f"Cash disponible : {cash_amount:,.2f}")
 
-    # Étape 2 : insérer chaque ticker avec les données de dernière date
-    for ticker in tickers:
-        cursor.execute("""
-            SELECT PRICE, IMPORT_DATE 
-            FROM Products 
-            WHERE TICKER = ?
-            ORDER BY IMPORT_DATE DESC 
-            LIMIT 1
-        """, (ticker,))
+            # Trouver les 5 meilleurs tickers
+            cursor.execute("""
+                WITH StartPrices AS (
+                    SELECT TICKER, PRICE
+                    FROM Products
+                    WHERE IMPORT_DATE = (
+                        SELECT MIN(IMPORT_DATE)
+                        FROM Products
+                    )
+                ),
+                EndPrices AS (
+                    SELECT TICKER, PRICE
+                    FROM Products
+                    WHERE IMPORT_DATE = (
+                        SELECT MAX(IMPORT_DATE)
+                        FROM Products
+                    )
+                )
+                SELECT sp.TICKER, ep.PRICE, 
+                       ((ep.PRICE - sp.PRICE) / sp.PRICE) * 100 as RETURN
+                FROM StartPrices sp
+                JOIN EndPrices ep ON sp.TICKER = ep.TICKER
+                ORDER BY RETURN DESC
+                LIMIT 5
+            """)
+            top_tickers = cursor.fetchall()
+            
+            if not top_tickers:
+                print("Aucun ticker trouvé pour l'initialisation")
+                return
 
-        row = cursor.fetchone()
-        if row is None:
-            continue  # passe si le ticker n'existe pas dans Products
+            print("\nTickers sélectionnés pour l'initialisation :")
+            for ticker, price, return_value in top_tickers:
+                print(f"{ticker}: {price:.2f} (Rendement: {return_value:.2f}%)")
 
-        spot_price, last_date = row
+            # Calculer le montant maximum par ticker (cash/5)
+            max_amount_per_ticker = cash_amount / 5
+            
+            # Insérer les positions
+            total_invested = 0
+            for ticker, price, _ in top_tickers:
+                # Calculer la quantité maximale possible pour ce ticker
+                quantity = int(max_amount_per_ticker / price)
+                if quantity > 0:  # Ne pas insérer si la quantité est 0
+                    cursor.execute("""
+                        INSERT INTO Portfolios (RISK_TYPE, TICKER, QUANTITY, MANAGER_ID, LAST_UPDATED, SPOT_PRICE)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, ("HY_EQUITY", ticker, quantity, 1, 
+                          (self.end_date - timedelta(days=1)).strftime("%Y-%m-%d"), price))
+                    print(f"→ Achat de {quantity} unités de {ticker} @ {price:.2f}")
+                    total_invested += quantity * price
 
-        # Insertion dans Portfolios
-        cursor.execute("""
-            INSERT INTO Portfolios (RISK_TYPE, TICKER, QUANTITY, MANAGER_ID, LAST_UPDATED, SPOT_PRICE)
-            VALUES ( ?, ?, ?, ?, ?, ?)
-        """, (risk_type ,ticker, quantité_initiale, manager_id, last_date, spot_price))
+            # Mettre à jour le cash restant
+            remaining_cash = cash_amount - total_invested
+            cursor.execute("""
+                UPDATE Portfolios 
+                SET QUANTITY = ?
+                WHERE RISK_TYPE = ? AND TICKER = 'CASH'
+            """, (remaining_cash, risk_type))
+            
+            print(f"\nCash restant : {remaining_cash:,.2f}")
+            conn.commit()
 
-    # Valider les insertions
-    conn.commit()
-    conn.close()
-    print("Portfolios mis à jour avecc succés")
+        except Exception as e:
+            print(f"Erreur lors de l'initialisation du portefeuille : {e}")
+            conn.rollback()
+        finally:
+            conn.close()
+
 def update_portefeuille2(db_file, tickers, risk_type):
     """
     Initialise un portefeuille LOW_RISK avec les tickers macro,
