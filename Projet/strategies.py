@@ -8,12 +8,14 @@ import time
 from base_update import BaseUpdate
 
 class RunAllStrat:
-    def __init__(self, db_file, start_date, end_date, tickers):
+    def __init__(self, db_file, start_date, end_date, tickers, existing_data=None):
         self.db_file = db_file
         self.start_date = datetime.strptime(start_date, "%d/%m/%Y")
         self.end_date = datetime.strptime(end_date, "%d/%m/%Y")
         self.tickers = tickers
         self.stop_flag = False  # Ajouter un flag pour arrêter proprement
+        self.existing_data = existing_data
+        
 
     def update_products_for_last_week(self, simulation_date):
         """Updates the Products table with data from the previous week of the simulation date."""
@@ -35,7 +37,8 @@ class RunAllStrat:
             tickers=self.tickers,
             start_date=week_start_str,
             end_date=week_end_str,
-            db_file=self.db_file
+            db_file=self.db_file,
+            existing_data=self.existing_data
         )
         updater.update_products()
 

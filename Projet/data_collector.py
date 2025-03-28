@@ -110,6 +110,8 @@ class GetData:
             try:
                 df = self.get_data_yf(ticker, self.start_date, self.end_date)
                 if not df.empty:
+                    # Convertir les dates au format DD/MM/YYYY
+                    df['IMPORT_DATE'] = pd.to_datetime(df['IMPORT_DATE']).dt.strftime('%d/%m/%Y')
                     data_frames.append(df)
             except Exception as e:
                 print(f"Failed to fetch data for {ticker}: {e}")
