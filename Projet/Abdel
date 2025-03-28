@@ -1,166 +1,96 @@
-gdata = GetData(tickers, start_date, end_date)
-madata=gdata.main_data_frame()#on cree le dataframe avec TOUS les actifs TOUTE la periode
-#il manquerait le traitement des datas
-print(madata)
 
-
-#à mettre dasns le main
-
-gdata = GetData(tickers, start_date, end_date)
-madata=gdata.main_data_frame()#on cree le dataframe avec TOUS les actifs TOUTE la periode
-#il manquerait le traitement des datas
-print(madata)
-
-#à mettre dasns le main
-
-def strategy_low_risk(self):
-    print("Running LOW_RISK strategy...")
-    conn = sqlite3.connect(self.db_file)
-    cursor = conn.cursor()
-    risk_type = "LOW_RISK"
-
-    # Étape 1 : Quantités initiales
-    quantites = {}
-    query = "SELECT TICKER, QUANTITY FROM Portfolios WHERE RISK_TYPE = ?"
-    cursor.execute(query, (risk_type,))
-    for ticker, qte in cursor.fetchall():
-        quantites[ticker] = qte
-
-    # Étape 2 : Données depuis la table Products
-    df_sql = pd.read_sql_query("SELECT IMPORT_DATE, TICKER, PRICE FROM Products", conn)
-    df = df_sql.pivot(index='IMPORT_DATE', columns='TICKER', values='PRICE').reset_index()
-
-    historique = []
-
-    for ticker in df.columns[1:]:
-        cursor.execute("""
-            SELECT MANAGER_ID, ROWID FROM Portfolios
-            WHERE TICKER = ? AND RISK_TYPE = ?
-        """, (ticker, risk_type))
-        result = cursor.fetchone()
-        if result:
-            manager_id, portfolio_id = result
-            df[f"rend_{ticker}"] = None
-            for i in range(6, len(df), 7):  # tous les 7 jours (1er rendement à la 7e ligne)
-                price_today = df[ticker].iloc[i]
-                price_7_days_ago = df[ticker].iloc[i - 6]
-                rendement = (price_today - price_7_days_ago) / price_7_days_ago
-                df.loc[df.index[i], f"rend_{ticker}"] = rendement
-
-            rendements = df[f"rend_{ticker}"].dropna().tolist()
-            quantite = quantites.get(ticker, 50)
-
-            for j, r in enumerate(rendements):
-                variation = quantite * r
-                quantite += variation
-                spot = df.loc[df.index[j * 7 + 6], ticker]
-                trade_date = df.loc[df.index[j * 7 + 6], "IMPORT_DATE"]
-                trade_type = "Buy" if variation > 0 else "Sell"
-
-                historique.append({
-                    "TICKER": ticker,
-                    "spot": round(spot, 2),
-                    "Rendement": round(r, 4),
-                    "Variation_stock": int(variation),
-                    "Quantité_totale": int(quantite),
-                    "depense/revenu": round(-variation * spot, 2),
-                    "trade": trade_type,
-                    "trade_date": trade_date
-                })
-
-    conn.close()
-    df_resultat = pd.DataFrame(historique)
-    print(df_resultat)
-    return df_resultat
+import numpy as np
 
 import sqlite3
 import pandas as pd
 import numpy as np
 
-update_portefeuille1(db_file,['AAPL','MSFT'],'HY_EQUITY',50)
-tickers_macro = [
-    "SPY",       # US S&P 500 ETF
-    "CAC40.PA",  # CAC 40
-    "DAXEX.DE",  # DAX
-    "ISF.L",     # FTSE 100 (Londres)
-    "EWJ",       # Japon (Asie)
-    "BND",       # US Treasury Bonds
-    "GLD"        # Gold (autre classe d’actif)
-]
-tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'FB', 'TSLA', 'NVDA', 'PYPL', 'ADBE', 'INTC',"SPY", "CAC40.PA",  "DAXEX.DE", "ISF.L","EWJ","BND","GLD"]
-update_portefeuille2("Fund.db", tickers_macro, "LOW_RISK")
-def strategie_montecarlo_vol_limitee(db_file, risk_type, vol_max=0.10, simulations=3000, nb_days=252):
-    """
-    Construit un portefeuille avec une volatilité inférieure à vol_max
-    en utilisant une simulation Monte Carlo sur les données extraites de la base Products.
-    
-    Args:
-        db_file (str): Chemin vers la base de données SQLite
-        risk_type (str): Type de portefeuille (LOW_RISK, etc.)
-        vol_max (float): Volatilité maximale cible (ex: 0.10 pour 10%)
-        simulations (int): Nombre de portefeuilles simulés
-        nb_days (int): Nombre de jours pour annualiser (252 pour 1 an)
-    
-    Returns:
-        dict: Quantités optimales pour chaque actif sous forme de {ticker: quantité}
-    """
+def strategie_portefeuille_montecarlo(
+    db_file: str,
+    risk_type: str = "LOW_RISK",
+    num_simulations: int = 200,
+    num_days: int = 7,
+    target_volatility: float = 0.10,
+    max_budget: float = 5_000_000
+):
+    # Connexion et récupération des tickers et quantités existants
     conn = sqlite3.connect(db_file)
-    
-    # Récupérer les derniers prix pour chaque ticker unique
-    query = """
-    SELECT TICKER, MAX(IMPORT_DATE) as DATE
-    FROM Products
-    GROUP BY TICKER
+    query_portfolio = """
+        SELECT TICKER, QUANTITY
+        FROM Portfolios
+        WHERE RISK_TYPE = ?
     """
-    latest_dates = pd.read_sql_query(query, conn)
+    portfolio_df = pd.read_sql_query(query_portfolio, conn, params=(risk_type,))
     
-    tickers = latest_dates['TICKER'].tolist()
-    
-    # Récupérer les historiques complets
-    price_data = pd.read_sql_query("SELECT TICKER, IMPORT_DATE, PRICE FROM Products", conn)
-    conn.close()
-    
-    # Pivot pour créer un DataFrame de prix par ticker
-    price_pivot = price_data.pivot(index="IMPORT_DATE", columns="TICKER", values="PRICE")
-    price_pivot = price_pivot.sort_index().dropna(axis=1)  # Retirer les colonnes incomplètes
+    if portfolio_df.empty:
+        return(f"Aucun actif trouvé pour le profil de risque '{risk_type}'. Vérifie l'orthographe.")
 
-    # Recalculer les tickers valides après nettoyage
-    tickers = price_pivot.columns.tolist()
+    tickers = portfolio_df['TICKER'].tolist()
+    
+    # Récupérer les prix historiques depuis la table Products
+    price_data = {}
+    for ticker in tickers:
+        query_prices = """
+            SELECT IMPORT_DATE, PRICE
+            FROM Products
+            WHERE TICKER = ?
+            ORDER BY IMPORT_DATE ASC
+        """
+        df = pd.read_sql_query(query_prices, conn, params=(ticker,))
+        df['IMPORT_DATE'] = pd.to_datetime(df['IMPORT_DATE'], dayfirst=True)
+        df.set_index('IMPORT_DATE', inplace=True)
+        price_data[ticker] = df['PRICE']
+    conn.close()
+
+    # Créer un DataFrame aligné des prix
+    prices_df = pd.concat(price_data.values(), axis=1)
+    prices_df.columns = tickers
+    prices_df.dropna(inplace=True)
 
     # Calcul des rendements log
-    log_returns = np.log(price_pivot / price_pivot.shift(1)).dropna()
+    log_returns = np.log(prices_df / prices_df.shift(1)).dropna()
+    mean_returns = log_returns.mean()
+    cov_matrix = log_returns.cov()
 
-    # Simulation Monte Carlo
-    np.random.seed(42)
-    best_weights = None
-    best_cost = np.inf
-
-    for _ in range(simulations):
+    # Simuler des portefeuilles
+    results = []
+    for _ in range(num_simulations):
         weights = np.random.random(len(tickers))
         weights /= np.sum(weights)
+        
+        # Calcul rendement et volatilité du portefeuille simulé
+        port_return = np.sum(mean_returns * weights) * num_days
+        port_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix * num_days, weights)))
 
-        expected_vol = np.sqrt(np.dot(weights.T, np.dot(log_returns.cov() * nb_days, weights)))
+        # Récupérer le dernier prix spot
+        latest_prices = prices_df.iloc[-1].values
+        quantites = np.floor((weights * max_budget) / latest_prices)
+        total_value = np.sum(quantites * latest_prices)
 
-        if expected_vol <= vol_max:
-            # Calculer le coût (somme pondérée des derniers prix)
-            latest_prices = price_pivot.iloc[-1].values
-            total_cost = np.dot(weights, latest_prices)
+        if port_vol <= target_volatility and total_value <= max_budget:
+            results.append({
+                'weights': weights,
+                'quantities': quantites.astype(int),
+                'volatility': port_vol,
+                'expected_return': port_return,
+                'total_cost': total_value
+            })
 
-            if total_cost < best_cost:
-                best_cost = total_cost
-                best_weights = weights
+    # Choisir le portefeuille optimal : celui avec max return et coût minimal
+    if not results:
+        return "Aucun portefeuille trouvé respectant les contraintes."
+    
+    # Trier par return décroissant puis coût croissant
+    sorted_results = sorted(results, key=lambda x: (-x['expected_return'], x['total_cost']))
+    best_portfolio = sorted_results[0]
 
-    if best_weights is None:
-        return {"message": "Aucun portefeuille n'a une volatilité < 10% après simulation."}
+    # Retourner les quantités optimales associées aux tickers
+    optimal_quantities = dict(zip(tickers, best_portfolio['quantities']))
+    optimal_quantities['expected_return'] = best_portfolio['expected_return']
+    optimal_quantities['volatility'] = best_portfolio['volatility']
+    optimal_quantities['total_cost'] = best_portfolio['total_cost']
 
-    # Convertir les poids en quantités entières
-    latest_prices = price_pivot.iloc[-1]
-    quantities = (best_weights * 10000 / latest_prices).astype(int)  # 10000 arbitrairement comme budget fictif
+    return optimal_quantities
 
-    return dict(zip(tickers, quantities))
-
-# Exemple d'appel
-# strategie_montecarlo_vol_limitee("Fund.db", "LOW_RISK", 0.10)
-
-
+strategie_portefeuille_montecarlo( db_file, "LOW_RISK", 200, 7, 0.10 , 5000000 )
 
