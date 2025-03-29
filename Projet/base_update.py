@@ -195,51 +195,52 @@ class BaseUpdate:
     #abdel
     #abdel
 
-def update_portefeuille2(db_file, tickers, risk_type):
-    """
-    Initialise un portefeuille LOW_RISK avec les tickers macro,
-    en assignant quantité = 0, tout en stockant le dernier spot connu.
+    def initialisation_portefeuille_LR(self, tickers):
+        """
+        Initialise un portefeuille LOW_RISK avec les tickers macro,
+        en assignant quantité = 0, tout en stockant le dernier spot connu.
 
-    Args:
-        db_file (str): chemin vers la base de données
-        tickers (list): liste de tickers macro (ETF, obligations, etc.)
-        risk_type (str): ici on utilisera toujours 'LOW_RISK'
-    """
-    conn = sqlite3.connect(db_file)
-    cursor = conn.cursor()
+        Args:
+            db_file (str): chemin vers la base de données
+            tickers (list): liste de tickers macro (ETF, obligations, etc.)
+            risk_type (str): ici on utilisera toujours 'LOW_RISK'
+        """
+        risk_type = "LOW_RISK"
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
 
-    # Récupérer le MANAGER_ID (le premier dispo)
-    cursor.execute("SELECT MANAGER_ID FROM Managers ORDER BY MANAGER_ID LIMIT 1")
-    result = cursor.fetchone()
-    if result is None:
-        print("❌ Aucun manager trouvé dans la table Managers.")
-        conn.close()
-        return
-    manager_id = result[0]
+        # Récupérer le MANAGER_ID (le premier dispo)
+        cursor.execute("SELECT MANAGER_ID FROM Managers ORDER BY MANAGER_ID LIMIT 1")
+        result = cursor.fetchone()
+        if result is None:
+            print("❌ Aucun manager trouvé dans la table Managers.")
+            conn.close()
+            return
+        manager_id = result[0]
 
-    for ticker in tickers:
-        cursor.execute("""
-            SELECT PRICE, IMPORT_DATE
-            FROM Products
-            WHERE TICKER = ?
-            ORDER BY IMPORT_DATE DESC
-            LIMIT 1
-        """, (ticker,))
-        row = cursor.fetchone()
-
-        if row:
-            spot_price, last_date = row
+        for ticker in tickers:
             cursor.execute("""
-                INSERT INTO Portfolios (RISK_TYPE, TICKER, QUANTITY, MANAGER_ID, LAST_UPDATED, SPOT_PRICE)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                risk_type, ticker, 0, manager_id,
-                last_date, spot_price
-            ))
+                SELECT PRICE, IMPORT_DATE
+                FROM Products
+                WHERE TICKER = ?
+                ORDER BY IMPORT_DATE DESC
+                LIMIT 1
+            """, (ticker,))
+            row = cursor.fetchone()
 
-    conn.commit()
-    conn.close()
-    print("✅ Portefeuille LOW_RISK initialisé avec quantité = 0 pour tous les actifs.")
+            if row:
+                spot_price, last_date = row
+                cursor.execute("""
+                    INSERT INTO Portfolios (RISK_TYPE, TICKER, QUANTITY, MANAGER_ID, LAST_UPDATED, SPOT_PRICE)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    risk_type, ticker, 0, manager_id,
+                    last_date, spot_price
+                ))
+
+        conn.commit()
+        conn.close()
+        print("✅ Portefeuille LOW_RISK initialisé avec quantité = 0 pour tous les actifs.")
 
 
-#abdel
+    #abdel
