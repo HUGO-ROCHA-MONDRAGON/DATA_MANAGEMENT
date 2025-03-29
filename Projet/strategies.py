@@ -234,3 +234,114 @@ class RunAllStrat:
         # Nettoyage des tâches planifiées
         schedule.clear()
 
+import sqlite3
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
+def strategie_breakout_weekly_low_turnover(db_file: str):
+    conn = sqlite3.connect(db_file)
+
+    tickers = ["BTC-USD", "ETH-USD"]
+
+    # 1. Récupérer les données de prix (20 derniers jours)
+    price_data = {}
+    for ticker in tickers:
+        df = pd.read_sql_query("""
+            SELECT IMPORT_DATE, PRICE FROM Products
+            WHERE TICKER = ? ORDER BY IMPORT_DATE DESC LIMIT 20
+        """, conn, params=(ticker,))
+        if not df.empty:
+            df['IMPORT_DATE'] = pd.to_datetime(df['IMPORT_DATE'], dayfirst=True)
+            df.sort_values("IMPORT_DATE", inplace=True)
+            price_data[ticker] = df
+
+    if len(price_data) < 2:
+        return {"error": "Pas assez de données pour les tickers."}
+
+    # 2. Récupérer cash dispo
+    cash_df = pd.read_sql_query("""
+        SELECT QUANTITY FROM Portfolios
+        WHERE RISK_TYPE = 'LOW_TURNOVER' AND TICKER = 'CASH'
+    """, conn)
+    cash_available = float(cash_df['QUANTITY'].iloc[0]) if not cash_df.empty else 0
+
+    # 3. Récupérer nombre de deals effectués ce mois-ci
+    current_month = datetime.now().strftime("%Y-%m")
+    deals_df = pd.read_sql_query("""
+        SELECT COUNT(*) as count FROM Deals
+        WHERE RISK_TYPE = 'LOW_TURNOVER' AND strftime('%Y-%m', EXECUTION_DATE) = ?
+    """, conn, params=(current_month,))
+    deals_this_month = int(deals_df['count'].iloc[0]) if not deals_df.empty else 0
+    remaining_deals = 2 - deals_this_month
+
+    decisions = []
+
+    if remaining_deals <= 0:
+        return {"deals_this_month": deals_this_month, "decisions": []}
+
+    # 4. Appliquer les conditions de la stratégie breakout inversée
+    for ticker, df in price_data.items():
+        if len(df) < 15:
+            continue
+        last_price = df['PRICE'].iloc[-1]
+        ma20 = df['PRICE'].rolling(window=20).mean().iloc[-1]
+        last_week = df.iloc[-8:-1]
+        high_last_week = last_week['PRICE'].max()
+        low_last_week = last_week['PRICE'].min()
+
+        # Condition achat (long inversé)
+        if last_price < low_last_week and last_price < ma20 and remaining_deals > 0 and cash_available > last_price:
+            decisions.append({'ticker': ticker, 'action': 'BUY', 'price': last_price})
+            remaining_deals -= 1
+            cash_available -= last_price
+
+        # Condition vente (short inversé)
+        elif last_price > high_last_week and last_price > ma20 and remaining_deals > 0:
+            decisions.append({'ticker': ticker, 'action': 'SELL', 'price': last_price})
+            remaining_deals -= 1
+
+    # 5. Si toujours pas 2 décisions, fallback sur rendement
+    if len(decisions) < 2 and remaining_deals >= 2:
+        performances = []
+        for ticker, df in price_data.items():
+            rendement = (df['PRICE'].iloc[-1] - df['PRICE'].iloc[0]) / df['PRICE'].iloc[0]
+            performances.append((ticker, rendement, df['PRICE'].iloc[-1]))
+        sorted_perf = sorted(performances, key=lambda x: x[1])  # tri croissant
+
+        buy_candidate = sorted_perf[0]
+        sell_candidate = sorted_perf[-1]
+
+        # On fait ces deux deals si possible
+        if cash_available > buy_candidate[2]:
+            decisions.append({'ticker': buy_candidate[0], 'action': 'Buy', 'price': buy_candidate[2]})
+            decisions.append({'ticker': sell_candidate[0], 'action': 'Sell', 'price': sell_candidate[2]})
+            remaining_deals -= 2
+
+    # 6. Insérer dans Deals
+    for decision in decisions:
+        conn.execute("""
+            INSERT INTO Deals (RISK_TYPE, TICKER, EXECUTION_DATE, MANAGER_ID, TRADE_TYPE, QUANTITY, BUY_PRICE)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            'LOW_TURNOVER',
+            decision['ticker'],
+            datetime.now().strftime("%Y-%m-%d"),
+            2,
+            decision['action'],
+            1,
+            decision['price']
+        ))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "deals_this_month": deals_this_month + len(decisions),
+        "decisions": decisions,
+        "message": "✅ Décision(s) prise(s)." if decisions else "ℹ️ Aucune condition de signal remplie pour les actifs."
+    }
+
+
+result = strategie_breakout_weekly_low_turnover("Fund.db")
+result
